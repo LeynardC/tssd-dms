@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dole-blue: #1e419b;
+  --color-dole-blue-dark: #142c68;
+  --color-dole-red: #ce2029;
+  --color-dole-gold: #fad115;
+  --color-paper: #f7f5f0;
+  --color-ink: #101223;
+
+  --font-display: "Source Serif 4", Georgia, serif;
+  --font-body: "Inter", system-ui, sans-serif;
+}
+
+html {
+  font-size: 112.5%; /* bumps root from 16px to 18px, scaling all rem-based text sizes */
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background-color: var(--color-paper);
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+}
