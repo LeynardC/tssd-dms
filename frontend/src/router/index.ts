@@ -43,11 +43,7 @@ const routes = [
       {
         path: "documents",
         name: "documents",
-        component: () => import("../views/ComingSoon.vue"),
-        props: {
-          title: "Documents",
-          description: "Registration, Edit, and Search — coming soon.",
-        },
+        component: () => import("../features/documents/views/DocumentsHub.vue"),
       },
       {
         path: "monitoring",
@@ -63,13 +59,7 @@ const routes = [
         props: true,
       },
       {
-        path: "monitoring/:programId/folders",
-        name: "folder-tree",
-        component: () => import("../features/monitoring/views/ReportTree.vue"),
-        props: true,
-      },
-      {
-        path: "monitoring/:programId/files",
+        path: "documents/:programId/files/:folderPath*",
         name: "file-explorer",
         component: () =>
           import("../features/monitoring/views/FileExplorer.vue"),
