@@ -66,6 +66,7 @@ function buildPeriodsWithSource(files: MonitoringFile[]): PeriodWithSource[] {
 }
 
 export function useProgramFiles(programId: Ref<string> | string) {
+  const allFiles = ref<FileRecord[]>([]);
   const files = ref<MonitoringFile[]>([]);
   const periods = ref<PeriodWithSource[]>([]);
   const loading = ref(false);
@@ -77,6 +78,7 @@ export function useProgramFiles(programId: Ref<string> | string) {
     error.value = null;
     try {
       const all = await getAllProgramFiles(id);
+      allFiles.value = all;
       const monitoring = all
         .map(toMonitoringFile)
         .filter((f): f is MonitoringFile => f !== null);
@@ -96,5 +98,5 @@ export function useProgramFiles(programId: Ref<string> | string) {
 
   refresh();
 
-  return { files, periods, loading, error, refresh };
+  return { allFiles, files, periods, loading, error, refresh };
 }

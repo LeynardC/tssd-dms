@@ -3,6 +3,7 @@ import { ref } from "vue";
 export interface ConfirmOptions {
   title: string;
   message: string;
+  items?: string[]; // optional bulleted list, rendered below the message
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean; // true = red confirm button, for destructive actions

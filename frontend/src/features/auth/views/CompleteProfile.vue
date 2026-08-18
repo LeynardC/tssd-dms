@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { completeProfile, ApiError } from "../authService";
 import { setCurrentUser } from "../authStore";
-import { UNITS, PROGRAMS_BY_UNIT } from "../unitsAndPrograms";
+import {
+  ensureCategoriesLoaded,
+  UNITS,
+  programsByUnit,
+  categoriesLoading,
+} from "../../categories/data/categoryCache";
 
 const router = useRouter();
 const position = ref("");
@@ -12,8 +17,10 @@ const assignedProgram = ref("");
 const error = ref("");
 const loading = ref(false);
 
-const availablePrograms = computed(() => PROGRAMS_BY_UNIT[unit.value] ?? []);
-
+const availablePrograms = computed(
+  () => programsByUnit.value[unit.value] ?? [],
+);
+onMounted(ensureCategoriesLoaded);
 // Reset the program choice whenever unit changes, so a stale selection from
 // a different unit can't silently get submitted alongside a new unit.
 function handleUnitChange() {
@@ -63,10 +70,13 @@ async function handleSubmit() {
         class="bg-white border-2 border-black/10 rounded-lg p-8 space-y-5"
       >
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="complete-profile-position"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Position</label
           >
           <input
+            id="complete-profile-position"
             v-model="position"
             type="text"
             required
@@ -75,10 +85,13 @@ async function handleSubmit() {
           />
         </div>
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="complete-profile-unit"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Unit</label
           >
           <select
+            id="complete-profile-unit"
             v-model="unit"
             @change="handleUnitChange"
             required
@@ -91,17 +104,26 @@ async function handleSubmit() {
           </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="complete-profile-program"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Assigned Program</label
           >
           <select
+            id="complete-profile-program"
             v-model="assignedProgram"
             required
-            :disabled="!unit"
+            :disabled="!unit || categoriesLoading"
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue disabled:bg-black/5"
           >
             <option value="" disabled>
-              {{ unit ? "Select a program" : "Select a unit first" }}
+              {{
+                categoriesLoading
+                  ? "Loading programs..."
+                  : unit
+                    ? "Select a program"
+                    : "Select a unit first"
+              }}
             </option>
             <option
               v-for="p in availablePrograms"

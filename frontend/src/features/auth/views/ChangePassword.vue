@@ -9,9 +9,9 @@ import {
   ApiError,
 } from "../authService";
 import { currentUser, setCurrentUser } from "../authStore";
+import PasswordInput from "../../../components/PasswordInput.vue";
 
 const router = useRouter();
-const currentPassword = ref("");
 const newPassword = ref("");
 const confirmPassword = ref("");
 const error = ref("");
@@ -37,12 +37,8 @@ async function handleSubmit() {
 
   loading.value = true;
   try {
-    await changePassword(currentPassword.value, newPassword.value);
+    await changePassword(newPassword.value);
 
-    // Don't assume the password change silently invalidated this session on
-    // Fortify's classic /login guard — explicitly log out first, so /login
-    // is always hit as a genuinely fresh guest request instead of risking
-    // the "already logged in" redirect we've seen before.
     try {
       await logout();
     } catch {
@@ -86,44 +82,20 @@ async function handleSubmit() {
         @submit.prevent="handleSubmit"
         class="bg-white border-2 border-black/10 rounded-lg p-8 space-y-5"
       >
-        <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
-            >Temporary / current password</label
-          >
-          <input
-            v-model="currentPassword"
-            type="password"
-            autocomplete="current-password"
-            required
-            class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
-          />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
-            >New password</label
-          >
-          <input
-            v-model="newPassword"
-            type="password"
-            autocomplete="new-password"
-            required
-            minlength="8"
-            class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
-          />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
-            >Confirm new password</label
-          >
-          <input
-            v-model="confirmPassword"
-            type="password"
-            autocomplete="new-password"
-            required
-            minlength="8"
-            class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
-          />
-        </div>
+        <PasswordInput
+          id="change-password-new"
+          label="New password"
+          v-model="newPassword"
+          autocomplete="new-password"
+          :minlength="8"
+        />
+        <PasswordInput
+          id="change-password-confirm"
+          label="Confirm new password"
+          v-model="confirmPassword"
+          autocomplete="new-password"
+          :minlength="8"
+        />
         <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
         <button
           type="submit"

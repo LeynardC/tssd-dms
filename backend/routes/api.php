@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Http\Controllers\FileController;
+use App\Http\Controllers\CategoryController;
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
@@ -26,7 +27,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     });
 
     Route::put('/password/change', function (Request $request, UpdateUserPassword $updater) {
-        $updater->update($request->user(), $request->all());
+        $user = $request->user();
+
+        if ($user->must_change_password) {
+            $updater->forceUpdateWithoutCurrentPassword($user, $request->all());
+        } else {
+            $updater->update($user, $request->all());
+        }
+
         return response()->json(['message' => 'Password updated.']);
     });
 
@@ -52,6 +60,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::patch('/folders/{folder}/rename', [FolderController::class, 'rename']);
     Route::patch('/folders/{folder}/retire', [FolderController::class, 'retire']);
 
+    Route::get('/categories', [CategoryController::class, 'index']);
 
     Route::get('/files', [FileController::class, 'index']);
     Route::post('/files', [FileController::class, 'store']);
@@ -76,6 +85,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/staff/{user}/reset-password', [StaffController::class, 'resetPassword']);
         Route::patch('/staff/{user}', [StaffController::class, 'update']);
         Route::delete('/staff/{user}', [StaffController::class, 'destroy']);
+
+        Route::post('/categories', [CategoryController::class, 'store']);
+        Route::patch('/categories/{category}/rename', [CategoryController::class, 'rename']);
+        Route::patch('/categories/{category}/toggle-status', [CategoryController::class, 'toggleStatus']);
     });
 
     #endregion

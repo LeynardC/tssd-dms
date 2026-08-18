@@ -64,7 +64,7 @@ async function handleLogout() {
   <div class="min-h-screen bg-paper flex">
     <!-- Mobile top bar: hamburger + brand, hidden on desktop -->
     <div
-      class="md:hidden fixed top-0 left-0 right-0 h-14 bg-dole-blue text-white flex items-center gap-3 px-4 z-40"
+      class="md:hidden print:hidden fixed top-0 left-0 right-0 h-14 bg-dole-blue text-white flex items-center gap-3 px-4 z-40"
     >
       <button
         @click="mobileMenuOpen = !mobileMenuOpen"
@@ -86,7 +86,7 @@ async function handleLogout() {
     <!-- Sidebar: always visible on desktop (md:translate-x-0, md:static);
          slides in/out as an overlay on mobile based on mobileMenuOpen -->
     <aside
-      class="w-60 bg-dole-blue text-white flex flex-col shrink-0 fixed inset-y-0 left-0 z-50 transition-transform duration-200 md:static md:translate-x-0"
+      class="w-60 bg-dole-blue text-white flex flex-col shrink-0 fixed inset-y-0 left-0 z-50 transition-transform duration-200 md:static md:translate-x-0 print:hidden"
       :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="px-5 py-6 border-b border-white/10">
@@ -127,7 +127,7 @@ async function handleLogout() {
     </aside>
 
     <!-- Main content: top padding on mobile to clear the fixed top bar -->
-    <div class="flex-1 min-w-0 pt-14 md:pt-0">
+    <div class="flex-1 min-w-0 pt-14 md:pt-0 print:pt-0 print:w-full">
       <router-view />
     </div>
 

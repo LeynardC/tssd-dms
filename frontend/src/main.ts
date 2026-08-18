@@ -14,7 +14,7 @@ const app = createApp(App);
 // render/setup/lifecycle that isn't already handled locally. Without this,
 // an uncaught error can silently blank the whole app with nothing but a
 // cryptic message in the browser console — invisible to the person using it.
-app.config.errorHandler = (err, instance, info) => {
+app.config.errorHandler = (err, _instance, info) => {
   console.error("Unhandled component error:", err, info);
 
   // Import dynamically to avoid a circular/early-init dependency on the

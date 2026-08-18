@@ -8,6 +8,12 @@ const { isOpen, options, handleConfirm, handleCancel } = useConfirm();
 <template>
   <Modal v-if="isOpen" :title="options.title" @close="handleCancel">
     <p class="text-sm text-black/70">{{ options.message }}</p>
+    <ul
+      v-if="options.items && options.items.length"
+      class="text-sm text-black/70 list-disc pl-5 mt-2 space-y-1 max-h-60 overflow-y-auto"
+    >
+      <li v-for="(item, i) in options.items" :key="i">{{ item }}</li>
+    </ul>
     <template #footer>
       <button
         @click="handleCancel"

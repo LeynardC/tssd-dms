@@ -1,4 +1,4 @@
-import { apiFetch, readCookie, getXsrfToken } from "../../auth/authService";
+import { apiFetch, readCookie, getXsrfToken, ApiError } from "../../auth/authService";
 
 const PREVIEWABLE_MIMES = ["application/pdf", "image/jpeg", "image/png"];
 
@@ -66,6 +66,58 @@ export async function uploadFile(
     body: formData,
   });
   return result.file;
+}
+
+export function uploadFileWithProgress(
+  programId: string,
+  folderId: number | null,
+  file: File,
+  onProgress: (percent: number) => void,
+  parsedData?: unknown,
+): Promise<FileRecord> {
+  return new Promise(async (resolve, reject) => {
+    const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+    const formData = new FormData();
+    formData.append("program_id", programId);
+    if (folderId !== null) formData.append("folder_id", String(folderId));
+    formData.append("file", file);
+    if (parsedData !== undefined) {
+      formData.append("parsed_data", JSON.stringify(parsedData));
+    }
+
+    const base = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${base}/api/files`, true);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.setRequestHeader("X-XSRF-TOKEN", xsrf);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      let body: any = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        body = { message: xhr.statusText };
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body.file as FileRecord);
+      } else {
+        reject(new ApiError(xhr.status, body));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Upload failed. Check your connection and try again."));
+    };
+
+    xhr.send(formData);
+  });
 }
 
 export function getDownloadUrl(fileId: number): string {

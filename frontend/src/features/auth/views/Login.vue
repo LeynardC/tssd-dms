@@ -53,10 +53,13 @@ async function handleSubmit() {
         class="bg-white border-2 border-black/10 rounded-lg p-8 space-y-5"
       >
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="login-username"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Username</label
           >
           <input
+            id="login-username"
             v-model="username"
             type="text"
             autocomplete="username"
@@ -65,11 +68,14 @@ async function handleSubmit() {
           />
         </div>
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="login-password"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Password</label
           >
           <div class="relative">
             <input
+              id="login-password"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               autocomplete="current-password"

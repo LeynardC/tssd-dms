@@ -1,80 +1,59 @@
+import { apiFetch, readCookie, getXsrfToken } from "../../auth/authService";
+
 export interface CategoryRecord {
-  id: string;
+  id: number;
+  code: string;
   name: string;
-  unit: "Unit 001" | "Unit 002" | "Unit 003";
-  status: "Active" | "Retired";
-  createdAt: string;
+  unit: "unit_001" | "unit_002" | "unit_003";
+  retired: boolean;
+  created_at: string;
 }
 
-const STORAGE_KEY = "tssd-dms-categories";
-
-const DEFAULT_CATEGORIES: Omit<CategoryRecord, "id" | "createdAt">[] = [
-  { name: "AEP", unit: "Unit 001", status: "Active" },
-  { name: "AMP", unit: "Unit 001", status: "Active" },
-  { name: "DO 174", unit: "Unit 001", status: "Active" },
-  { name: "GIP", unit: "Unit 001", status: "Active" },
-  { name: "PESO", unit: "Unit 001", status: "Active" },
-  { name: "SPES", unit: "Unit 001", status: "Active" },
-  { name: "Labor Inspection", unit: "Unit 002", status: "Active" },
-  { name: "Labor Relations", unit: "Unit 002", status: "Active" },
-  { name: "Livelihood", unit: "Unit 003", status: "Active" },
-  { name: "TUPAD", unit: "Unit 003", status: "Active" },
-];
-
-function seedIfEmpty(): CategoryRecord[] {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    try {
-      return JSON.parse(raw) as CategoryRecord[];
-    } catch {
-      // fall through to reseed
-    }
-  }
-  const now = new Date().toISOString();
-  const seeded = DEFAULT_CATEGORIES.map((c) => ({
-    ...c,
-    id: crypto.randomUUID(),
-    createdAt: now,
-  }));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-  return seeded;
+export async function getAllCategories(): Promise<CategoryRecord[]> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  const result = await apiFetch<{ categories: CategoryRecord[] }>(
+    "/api/categories",
+    { xsrf },
+  );
+  return result.categories;
 }
 
-export function getAllCategories(): CategoryRecord[] {
-  return seedIfEmpty();
-}
-
-function saveAll(categories: CategoryRecord[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(categories));
-}
-
-export function addCategory(
+export async function addCategory(
+  code: string,
   name: string,
   unit: CategoryRecord["unit"],
-): CategoryRecord {
-  const all = getAllCategories();
-  const record: CategoryRecord = {
-    id: crypto.randomUUID(),
-    name: name.trim(),
-    unit,
-    status: "Active",
-    createdAt: new Date().toISOString(),
-  };
-  all.push(record);
-  saveAll(all);
-  return record;
+): Promise<CategoryRecord> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  const result = await apiFetch<{ category: CategoryRecord }>(
+    "/api/categories",
+    {
+      method: "POST",
+      xsrf,
+      body: JSON.stringify({ code, name, unit }),
+    },
+  );
+  return result.category;
 }
 
-export function renameCategory(id: string, newName: string): void {
-  const all = getAllCategories();
-  const cat = all.find((c) => c.id === id);
-  if (cat) cat.name = newName.trim();
-  saveAll(all);
+export async function renameCategory(
+  id: number,
+  newName: string,
+): Promise<CategoryRecord> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  const result = await apiFetch<{ category: CategoryRecord }>(
+    `/api/categories/${id}/rename`,
+    { method: "PATCH", xsrf, body: JSON.stringify({ name: newName }) },
+  );
+  return result.category;
 }
 
-export function toggleCategoryStatus(id: string): void {
-  const all = getAllCategories();
-  const cat = all.find((c) => c.id === id);
-  if (cat) cat.status = cat.status === "Active" ? "Retired" : "Active";
-  saveAll(all);
+export async function toggleCategoryStatus(
+  id: number,
+): Promise<CategoryRecord> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  const result = await apiFetch<{ category: CategoryRecord }>(
+    `/api/categories/${id}/toggle-status`,
+    { method: "PATCH", xsrf },
+  );
+  return result.category;
 }

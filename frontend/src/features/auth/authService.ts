@@ -104,16 +104,12 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 
 // Used by D2's screen next, not wired to any UI yet — written now since it
 // belongs in the same service layer as everything else auth-related.
-export async function changePassword(
-  currentPassword: string,
-  newPassword: string,
-): Promise<void> {
+export async function changePassword(newPassword: string): Promise<void> {
   const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
   await apiFetch("/api/password/change", {
     method: "PUT",
     xsrf,
     body: JSON.stringify({
-      current_password: currentPassword,
       password: newPassword,
       password_confirmation: newPassword,
     }),

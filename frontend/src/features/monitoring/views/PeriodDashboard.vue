@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { getProgram, balance, type Metric } from "../data/mockMonitoring";
-import { getPeriodsWithSource } from "../data/uploadStore";
+import { useProgramFiles } from "../composables/useProgramFiles";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { formatCurrency } from "../../../utils/format";
 
@@ -10,6 +10,11 @@ const props = defineProps<{
   periodId: string;
   scope: string;
 }>();
+
+const { periods, loading, error } = useProgramFiles(
+  computed(() => props.programId),
+);
+
 const crumbs = computed<Crumb[]>(() => [
   { label: "Monitoring", to: { name: "unit-overview" } },
   {
@@ -28,14 +33,6 @@ const crumbs = computed<Crumb[]>(() => [
 
 const program = computed(() => getProgram(props.programId));
 
-const uploadRecord = computed(() => {
-  const match = getPeriodsWithSource(props.programId).find(
-    ({ period }) =>
-      matchesPeriodId(period, props.periodId) && period.scope === props.scope,
-  );
-  return match?.file ?? null;
-});
-
 function matchesPeriodId(
   p: { year: number; quarter?: string },
   id: string,
@@ -44,14 +41,18 @@ function matchesPeriodId(
   return built === id;
 }
 
-const entries = computed(() => {
-  return getPeriodsWithSource(props.programId)
-    .filter(
-      ({ period }) =>
-        matchesPeriodId(period, props.periodId) && period.scope === props.scope,
-    )
-    .map(({ period }) => period);
-});
+const matchingEntries = computed(() =>
+  periods.value.filter(
+    ({ period }) =>
+      matchesPeriodId(period, props.periodId) && period.scope === props.scope,
+  ),
+);
+
+const uploadRecord = computed(() => matchingEntries.value[0]?.file ?? null);
+
+const entries = computed(() =>
+  matchingEntries.value.map(({ period }) => period),
+);
 
 const hasData = computed(() => entries.value.length > 0);
 
@@ -68,11 +69,7 @@ function formatDate(iso: string): string {
 const showQuarterly = ref(false);
 
 const quarterlyForScope = computed(() => {
-  const match = getPeriodsWithSource(props.programId).find(
-    ({ period }) =>
-      matchesPeriodId(period, props.periodId) && period.scope === props.scope,
-  );
-  return match?.file.quarterly?.[props.scope] ?? null;
+  return uploadRecord.value?.data.quarterly?.[props.scope] ?? null;
 });
 
 function quarterTrend(
@@ -206,14 +203,23 @@ function handlePrint() {
         Source: {{ uploadRecord.fileName }} • Uploaded
         {{ formatDate(uploadRecord.uploadedAt) }}
       </p>
-      <p v-else class="text-white/70 text-xs mt-2 italic">
+      <p v-else-if="!loading" class="text-white/70 text-xs mt-2 italic">
         No file uploaded yet for this program.
       </p>
     </header>
 
     <main class="max-w-4xl mx-auto px-8 py-8">
+      <div v-if="loading" class="text-black/50 text-sm">Loading…</div>
+
       <div
-        v-if="!hasData"
+        v-else-if="error"
+        class="bg-dole-red/10 border border-dole-red/30 text-dole-red rounded-lg p-4"
+      >
+        {{ error }}
+      </div>
+
+      <div
+        v-else-if="!hasData"
         class="bg-white border border-black/10 border-dashed rounded-lg p-8 text-center"
       >
         <p class="text-black/50 text-sm">
@@ -345,11 +351,7 @@ function handlePrint() {
                     }}
                   </td>
                   <td class="py-1.5">
-                    ₱{{
-                      q.fund.toLocaleString(undefined, {
-                        maximumFractionDigits: 0,
-                      })
-                    }}
+                    {{ formatCurrency(q.fund) }}
                     <span
                       v-if="q.fundTrend === 'up'"
                       class="text-green-600 ml-1"

@@ -42,28 +42,38 @@ const icon = computed(() => (props.kind === "folder" ? "📁" : "📄"));
 </script>
 
 <template>
-  <!-- List layout: one row -->
+  <!-- List layout: stacked card on mobile, full row grid from sm: up -->
   <div
     v-if="layout === 'list'"
-    class="grid grid-cols-[1fr_140px_180px_100px_40px] items-center gap-3 px-3 py-2 rounded hover:bg-black/5 group cursor-pointer"
+    class="flex items-center gap-3 px-3 py-2 rounded hover:bg-black/5 group cursor-pointer sm:grid sm:grid-cols-[1fr_140px_180px_100px_40px]"
     @click="emit('open')"
   >
-    <div class="flex items-center gap-2 min-w-0">
-      <span>{{ icon }}</span>
-      <span class="text-sm truncate" :class="{ 'text-black/40': file?.locked }">
-        {{ name }}
-        <span v-if="file?.locked" class="text-xs text-black/40 ml-1"
-          >(locked)</span
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 min-w-0">
+        <span>{{ icon }}</span>
+        <span
+          class="text-sm truncate"
+          :class="{ 'text-black/40': file?.locked }"
         >
-      </span>
+          {{ name }}
+          <span v-if="file?.locked" class="text-xs text-black/40 ml-1"
+            >(locked)</span
+          >
+        </span>
+      </div>
+      <p class="text-xs text-black/40 truncate mt-0.5 sm:hidden">
+        {{ ownerName }} • {{ modifiedAt }} • {{ sizeLabel }}
+      </p>
     </div>
-    <span class="text-xs text-black/50 truncate">{{ ownerName }}</span>
-    <span class="text-xs text-black/50">{{ modifiedAt }}</span>
-    <span class="text-xs text-black/50">{{ sizeLabel }}</span>
+    <span class="hidden sm:inline text-xs text-black/50 truncate">{{
+      ownerName
+    }}</span>
+    <span class="hidden sm:inline text-xs text-black/50">{{ modifiedAt }}</span>
+    <span class="hidden sm:inline text-xs text-black/50">{{ sizeLabel }}</span>
     <button
       v-if="canManage"
       @click.stop="emit('menu', $event)"
-      class="w-8 h-8 inline-flex items-center justify-center rounded hover:bg-black/10 text-black/50 hover:text-black opacity-0 group-hover:opacity-100 transition"
+      class="w-8 h-8 inline-flex items-center justify-center rounded hover:bg-black/10 text-black/50 hover:text-black opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition shrink-0"
       aria-label="Actions"
     >
       ⋮

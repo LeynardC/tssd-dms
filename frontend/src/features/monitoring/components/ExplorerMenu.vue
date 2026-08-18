@@ -4,10 +4,12 @@ const props = defineProps<{
   kind: "folder" | "file";
   locked?: boolean;
   previewable?: boolean;
+  hasData?: boolean;
 }>();
 
 const emit = defineEmits<{
   preview: [];
+  viewData: [];
   rename: [];
   move: [];
   download: [];
@@ -31,6 +33,13 @@ const emit = defineEmits<{
         class="w-full text-left px-3 py-2 text-sm hover:bg-black/5"
       >
         Preview
+      </button>
+      <button
+        v-if="kind === 'file' && hasData"
+        @click="emit('viewData')"
+        class="w-full text-left px-3 py-2 text-sm hover:bg-black/5"
+      >
+        View Data
       </button>
       <button
         v-if="kind === 'file'"

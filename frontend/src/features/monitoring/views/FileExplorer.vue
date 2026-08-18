@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
-import { getProgram } from "../data/mockMonitoring";
+import { useRouter } from "vue-router";
+import * as XLSX from "xlsx";
+import { hasParser, parseWorkbookForProgram } from "../parsers";
+import {
+  ensureCategoriesLoaded,
+  activeCategories,
+} from "../../categories/data/categoryCache";
 import {
   getFolders,
   createFolder,
@@ -11,7 +17,7 @@ import {
 } from "../data/folderStore";
 import {
   getFiles,
-  uploadFile,
+  uploadFileWithProgress,
   renameFile,
   moveFile,
   toggleFileLock,
@@ -29,41 +35,74 @@ import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import Modal from "../../../components/Modal.vue";
 import ExplorerItem from "../components/ExplorerItem.vue";
 import ExplorerMenu from "../components/ExplorerMenu.vue";
+import { useProgramFiles } from "../composables/useProgramFiles";
 
-const props = defineProps<{ programId: string }>();
-const program = computed(() => getProgram(props.programId));
+const props = defineProps<{
+  programId: string;
+  folderPath?: string[];
+}>();
+const router = useRouter();
+const program = computed(() =>
+  activeCategories.value.find((c) => c.code === props.programId),
+);
 const { confirmAction } = useConfirm();
 const { promptAction } = usePrompt();
 const { showToast } = useToast();
 
 const canManage = computed(() => canManageFolders(props.programId));
 const layout = ref<"grid" | "list">("list");
+const { periods: existingPeriods } = useProgramFiles(props.programId);
 
-// --- Navigation: current folder + breadcrumb trail ---
-const currentFolderId = ref<number | null>(null);
-const pathTrail = ref<FolderRecord[]>([]); // ancestors of currentFolderId, root -> current
+// --- Navigation: current folder + breadcrumb trail, derived from the URL ---
+const folderIds = computed<number[]>(() =>
+  (props.folderPath ?? []).map((id) => Number(id)),
+);
 
-const crumbs = computed<Crumb[]>(() => [
-  { label: "Monitoring", to: { name: "unit-overview" } },
-  {
-    label: program.value?.name ?? "",
-    to: { name: "program-periods", params: { programId: props.programId } },
-  },
-  {
-    label: "Files",
-    to:
-      currentFolderId.value === null
-        ? undefined
-        : { name: "file-explorer", params: { programId: props.programId } },
-  },
-  ...pathTrail.value.map((f) => ({ label: f.name })),
-]);
+const currentFolderId = computed<number | null>(() => {
+  const ids = folderIds.value;
+  return ids.length === 0 ? null : ids[ids.length - 1];
+});
 
-// --- Data ---
 const allFolders = ref<FolderRecord[]>([]);
 const files = ref<FileRecord[]>([]);
 const loading = ref(true);
 const loadError = ref("");
+
+const pathTrail = computed<FolderRecord[]>(() =>
+  folderIds.value
+    .map((id) => allFolders.value.find((f) => f.id === id))
+    .filter((f): f is FolderRecord => !!f),
+);
+
+const crumbs = computed<Crumb[]>(
+  () =>
+    [
+      { label: "Documents", to: { name: "documents" } },
+      {
+        label: program.value?.name ?? "",
+        to:
+          currentFolderId.value === null
+            ? undefined
+            : {
+                name: "file-explorer",
+                params: { programId: props.programId, folderPath: [] },
+              },
+      },
+      ...pathTrail.value.map((f, i) => ({
+        label: f.name,
+        to:
+          i === pathTrail.value.length - 1
+            ? undefined
+            : {
+                name: "file-explorer",
+                params: {
+                  programId: props.programId,
+                  folderPath: folderIds.value.slice(0, i + 1).map(String),
+                },
+              },
+      })),
+    ] as Crumb[],
+);
 
 const childFolders = computed(() =>
   allFolders.value
@@ -89,22 +128,18 @@ async function loadAll() {
 }
 
 onMounted(loadAll);
-watch(currentFolderId, loadAll);
+onMounted(ensureCategoriesLoaded);
+watch(() => props.folderPath, loadAll);
+watch(() => props.folderPath, closeMenu);
 
 function openFolder(folder: FolderRecord) {
-  pathTrail.value = [...pathTrail.value, folder];
-  currentFolderId.value = folder.id;
-}
-
-function goToBreadcrumb(index: number) {
-  // index into pathTrail; -1 means "Files" root
-  if (index < 0) {
-    pathTrail.value = [];
-    currentFolderId.value = null;
-    return;
-  }
-  pathTrail.value = pathTrail.value.slice(0, index + 1);
-  currentFolderId.value = pathTrail.value[index].id;
+  router.push({
+    name: "file-explorer",
+    params: {
+      programId: props.programId,
+      folderPath: [...folderIds.value.map(String), String(folder.id)],
+    },
+  });
 }
 
 // --- New folder ---
@@ -130,20 +165,104 @@ async function handleNewFolder() {
 // --- Upload ---
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
-
+const uploadProgress = ref(0);
 function triggerUpload() {
   fileInput.value?.click();
 }
 
+function isLikelyXlsx(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer.slice(0, 2));
+  return bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+async function tryParseXlsx(file: File): Promise<unknown | undefined> {
+  const isXlsx = file.name.toLowerCase().endsWith(".xlsx");
+  if (!isXlsx || !hasParser(props.programId)) return undefined;
+
+  try {
+    const buffer = await file.arrayBuffer();
+    if (!isLikelyXlsx(buffer)) return undefined;
+    const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+    const result = parseWorkbookForProgram(props.programId, wb);
+    const hasRealData = result.periods.some((p) =>
+      p.metrics.some((m) => !m.isPlaceholder && m.actual !== 0),
+    );
+    if (!hasRealData) return undefined;
+    return {
+      periods: result.periods,
+      warnings: result.warnings,
+      quarterly: result.quarterly,
+      unutilizedFunds: result.unutilizedFunds,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function findShadowedPeriods(parsedData: {
+  periods: { year: number; quarter?: string; scope: string; label: string }[];
+}): { scope: string; label: string; fileName: string; uploadedBy: string }[] {
+  const conflicts: {
+    scope: string;
+    label: string;
+    fileName: string;
+    uploadedBy: string;
+  }[] = [];
+  for (const entry of parsedData.periods) {
+    const match = existingPeriods.value.find(
+      ({ period }) =>
+        period.year === entry.year &&
+        period.quarter === entry.quarter &&
+        period.scope === entry.scope,
+    );
+    if (match) {
+      conflicts.push({
+        scope: entry.scope,
+        label: entry.label,
+        fileName: match.file.fileName,
+        uploadedBy: match.file.uploadedByName,
+      });
+    }
+  }
+  return conflicts;
+}
 async function handleFileSelected(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
   if (!file) return;
 
+  const parsedData = await tryParseXlsx(file);
+
+  if (parsedData) {
+    const conflicts = findShadowedPeriods(parsedData as { periods: any[] });
+    if (conflicts.length > 0) {
+      const ok = await confirmAction({
+        title: "Overwrite Existing Data?",
+        message: "This will replace existing dashboard data for:",
+        items: conflicts.map(
+          (c) =>
+            `${c.scope} (${c.label}) — currently from "${c.fileName}", uploaded by ${c.uploadedBy}`,
+        ),
+        confirmLabel: "Upload Anyway",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+  }
+
   uploading.value = true;
+  uploadProgress.value = 0;
   try {
-    await uploadFile(props.programId, currentFolderId.value, file);
+    await uploadFileWithProgress(
+      props.programId,
+      currentFolderId.value,
+      file,
+      (percent) => {
+        uploadProgress.value = percent;
+      },
+      parsedData,
+    );
     showToast(`"${file.name}" uploaded.`, "success");
     await loadAll();
   } catch (err) {
@@ -176,9 +295,14 @@ function showMenu(target: MenuTarget, event: MouseEvent) {
     window.innerHeight - rect.bottom >= 260 ? rect.bottom + 4 : rect.top - 264;
   menuPosition.value = { top: Math.max(8, top), left };
   openMenu.value = target;
+  // Close on any click outside the menu, or on any navigation away from
+  // this folder. Registered fresh each time the menu opens; removed the
+  // moment it closes so it never lingers or stacks up duplicate listeners.
+  setTimeout(() => document.addEventListener("click", closeMenu), 0);
 }
 function closeMenu() {
   openMenu.value = null;
+  document.removeEventListener("click", closeMenu);
 }
 
 // --- Folder actions ---
@@ -301,8 +425,6 @@ const moveTarget = ref<MenuTarget | null>(null);
 const moveDestination = ref<number | "">("");
 
 const moveDestinationOptions = computed(() => {
-  // Any folder except the item itself (for folders) is a valid destination.
-  // Root ("Unfiled") is always an option.
   return allFolders.value
     .filter(
       (f) =>
@@ -328,8 +450,6 @@ async function confirmMove() {
       await moveFile(moveTarget.value.file.id, destId);
       showToast("File moved.", "success");
     }
-    // Folder-to-folder moving isn't in FolderController yet (only rename/retire) —
-    // flagged rather than silently failed:
     if (moveTarget.value.kind === "folder") {
       showToast(
         "Moving folders isn't supported yet — only files can be moved for now.",
@@ -380,6 +500,20 @@ function handleFilePreview() {
   if (!file) return;
   previewTarget.value = file;
 }
+
+function hasParsedData(file: FileRecord): boolean {
+  return !!file.parsed_data && Array.isArray((file.parsed_data as any).periods);
+}
+
+function handleViewData() {
+  const file = openMenu.value?.file;
+  closeMenu();
+  if (!file) return;
+  router.push({
+    name: "upload-history-view",
+    params: { programId: props.programId, uploadId: file.id },
+  });
+}
 </script>
 
 <template>
@@ -387,32 +521,12 @@ function handleFilePreview() {
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
-        {{ program.fullName }} — Files
+        {{ program.name }} — Files
       </h1>
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
-      <div class="flex items-center justify-between mb-4 gap-3">
-        <div class="flex items-center gap-2 text-sm">
-          <button
-            class="text-dole-blue hover:underline"
-            :class="{ 'font-semibold': currentFolderId === null }"
-            @click="goToBreadcrumb(-1)"
-          >
-            Root
-          </button>
-          <template v-for="(f, i) in pathTrail" :key="f.id">
-            <span class="text-black/30">/</span>
-            <button
-              class="text-dole-blue hover:underline"
-              :class="{ 'font-semibold': i === pathTrail.length - 1 }"
-              @click="goToBreadcrumb(i)"
-            >
-              {{ f.name }}
-            </button>
-          </template>
-        </div>
-
+      <div class="flex items-center justify-end mb-4 gap-3">
         <div class="flex items-center gap-2">
           <div class="flex border border-black/10 rounded overflow-hidden">
             <button
@@ -450,7 +564,7 @@ function handleFilePreview() {
               :disabled="uploading"
               class="bg-dole-blue text-white text-sm px-3 py-1.5 rounded hover:bg-dole-blue-dark transition disabled:opacity-50"
             >
-              {{ uploading ? "Uploading…" : "+ Upload" }}
+              {{ uploading ? `Uploading… ${uploadProgress}%` : "+ Upload" }}
             </button>
             <input
               ref="fileInput"
@@ -478,7 +592,7 @@ function handleFilePreview() {
           <!-- List header -->
           <div
             v-if="layout === 'list'"
-            class="grid grid-cols-[1fr_140px_180px_100px_40px] gap-3 px-3 pb-2 mb-1 border-b border-black/10 text-xs font-medium text-black/40 uppercase tracking-wide"
+            class="hidden sm:grid grid-cols-[1fr_140px_180px_100px_40px] gap-3 px-3 pb-2 mb-1 border-b border-black/10 text-xs font-medium text-black/40 uppercase tracking-wide"
           >
             <span>Name</span>
             <span>Owner</span>
@@ -527,7 +641,9 @@ function handleFilePreview() {
       :previewable="
         openMenu.file ? isPreviewable(openMenu.file.mime_type) : false
       "
+      :has-data="openMenu.file ? hasParsedData(openMenu.file) : false"
       @preview="handleFilePreview"
+      @view-data="handleViewData"
       @rename="
         openMenu.kind === 'folder' ? handleFolderRename() : handleFileRename()
       "

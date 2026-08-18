@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { getProgram } from "../data/mockMonitoring";
-import { getPeriodsWithSource } from "../data/uploadStore";
+import { useProgramFiles } from "../composables/useProgramFiles";
 import MetricComparisonChart from "../components/MetricComparisonChart.vue";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import { formatCurrency } from "../../../utils/format";
 
 const props = defineProps<{ programId: string; periodId: string }>();
 const program = computed(() => getProgram(props.programId));
@@ -18,14 +19,9 @@ const crumbs = computed<Crumb[]>(() => [
   { label: props.periodId },
 ]);
 
-const unutilizedFunds = computed(() => {
-  const match = getPeriodsWithSource(props.programId).find(({ period }) =>
-    matchesPeriodId(period, props.periodId),
-  );
-  return match?.file.unutilizedFunds ?? [];
-});
-
-const AGGREGATE_SCOPE_PATTERN = /region|mimaropa|total/i;
+const { periods, loading, error } = useProgramFiles(
+  computed(() => props.programId),
+);
 
 function matchesPeriodId(
   p: { year: number; quarter?: string },
@@ -35,6 +31,16 @@ function matchesPeriodId(
   return built === id;
 }
 
+const matchingEntries = computed(() =>
+  periods.value.filter(({ period }) => matchesPeriodId(period, props.periodId)),
+);
+
+const unutilizedFunds = computed(() => {
+  return matchingEntries.value[0]?.file.data.unutilizedFunds ?? [];
+});
+
+const AGGREGATE_SCOPE_PATTERN = /region|mimaropa|total/i;
+
 interface MetricGroup {
   key: string;
   label: string;
@@ -43,11 +49,9 @@ interface MetricGroup {
   bars: { label: string; target: number | null; actual: number }[];
 }
 
-const periodEntries = computed(() => {
-  return getPeriodsWithSource(props.programId)
-    .filter(({ period }) => matchesPeriodId(period, props.periodId))
-    .map(({ period }) => period);
-});
+const periodEntries = computed(() =>
+  matchingEntries.value.map(({ period }) => period),
+);
 
 const comparisonGroups = computed<MetricGroup[]>(() => {
   const provinceEntries = periodEntries.value.filter(
@@ -89,8 +93,17 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
+      <div v-if="loading" class="text-black/50 text-sm">Loading…</div>
+
       <div
-        v-if="scopes.length === 0"
+        v-else-if="error"
+        class="bg-dole-red/10 border border-dole-red/30 text-dole-red rounded-lg p-4"
+      >
+        {{ error }}
+      </div>
+
+      <div
+        v-else-if="scopes.length === 0"
         class="bg-white border border-black/10 border-dashed rounded-lg p-8 text-center"
       >
         <p class="text-black/50 text-sm">No provinces found for this period.</p>
@@ -145,18 +158,10 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
               >
                 <td class="py-2">{{ entry.lgu }}</td>
                 <td class="py-2">
-                  ₱{{
-                    (entry.startingBalance ?? 0).toLocaleString(undefined, {
-                      maximumFractionDigits: 0,
-                    })
-                  }}
+                  {{ formatCurrency(entry.startingBalance ?? 0) }}
                 </td>
                 <td class="py-2">
-                  ₱{{
-                    (entry.remainingBalance ?? 0).toLocaleString(undefined, {
-                      maximumFractionDigits: 0,
-                    })
-                  }}
+                  {{ formatCurrency(entry.remainingBalance ?? 0) }}
                 </td>
               </tr>
             </tbody>

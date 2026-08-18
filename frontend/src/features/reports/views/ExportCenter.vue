@@ -108,8 +108,11 @@ function onProgramChange() {
     <main class="max-w-2xl mx-auto px-8 py-8">
       <div class="bg-white border border-black/10 rounded-lg p-6">
         <div class="mb-4">
-          <label class="block text-sm font-medium mb-1">Program</label>
+          <label for="export-program" class="block text-sm font-medium mb-1"
+            >Program</label
+          >
           <select
+            id="export-program"
             v-model="selectedProgramId"
             @change="onProgramChange"
             class="w-full border border-black/20 rounded p-2 text-sm"
@@ -121,8 +124,11 @@ function onProgramChange() {
         </div>
 
         <div class="mb-6">
-          <label class="block text-sm font-medium mb-1">Period</label>
+          <label for="export-period" class="block text-sm font-medium mb-1"
+            >Period</label
+          >
           <select
+            id="export-period"
             v-model="selectedPeriodId"
             :disabled="availablePeriods.length === 0"
             class="w-full border border-black/20 rounded p-2 text-sm disabled:bg-black/5"

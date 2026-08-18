@@ -10,7 +10,12 @@ import {
   ApiError,
   type StaffMember,
 } from "../../auth/authService";
-import { UNITS, PROGRAMS_BY_UNIT } from "../../auth/unitsAndPrograms";
+import {
+  ensureCategoriesLoaded,
+  UNITS,
+  programsByUnit,
+  categoriesLoading,
+} from "../../categories/data/categoryCache";
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import Modal from "../../../components/Modal.vue";
@@ -97,10 +102,11 @@ async function loadStaff() {
 }
 
 onMounted(loadStaff);
+onMounted(ensureCategoriesLoaded);
 
 function programLabel(programValue: string | null): string {
   if (!programValue) return "—";
-  for (const list of Object.values(PROGRAMS_BY_UNIT)) {
+  for (const list of Object.values(programsByUnit.value)) {
     const match = list.find((p) => p.value === programValue);
     if (match) return match.label;
   }
@@ -287,7 +293,7 @@ const editError = ref("");
 const editSaving = ref(false);
 
 const editAvailablePrograms = computed(
-  () => PROGRAMS_BY_UNIT[editUnit.value] ?? [],
+  () => programsByUnit.value[editUnit.value] ?? [],
 );
 
 function openEdit(member: StaffMember) {
@@ -382,10 +388,13 @@ async function handleDelete(member: StaffMember) {
       >
         <form @submit.prevent="handleCreate" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-black/70 mb-1"
+            <label
+              for="create-staff-name"
+              class="block text-sm font-medium text-black/70 mb-1"
               >Full name</label
             >
             <input
+              id="create-staff-name"
               v-model="name"
               type="text"
               required
@@ -393,10 +402,13 @@ async function handleDelete(member: StaffMember) {
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-black/70 mb-1"
+            <label
+              for="create-staff-username"
+              class="block text-sm font-medium text-black/70 mb-1"
               >Username</label
             >
             <input
+              id="create-staff-username"
               v-model="username"
               type="text"
               required
@@ -405,10 +417,13 @@ async function handleDelete(member: StaffMember) {
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-black/70 mb-1"
+            <label
+              for="create-staff-id"
+              class="block text-sm font-medium text-black/70 mb-1"
               >Staff ID</label
             >
             <input
+              id="create-staff-id"
               v-model="staffId"
               type="text"
               required
@@ -638,10 +653,13 @@ async function handleDelete(member: StaffMember) {
     >
       <form @submit.prevent="saveEdit" class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="edit-staff-position"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Position</label
           >
           <input
+            id="edit-staff-position"
             v-model="editPosition"
             type="text"
             required
@@ -649,10 +667,13 @@ async function handleDelete(member: StaffMember) {
           />
         </div>
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="edit-staff-unit"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Unit</label
           >
           <select
+            id="edit-staff-unit"
             v-model="editUnit"
             @change="handleEditUnitChange"
             required
@@ -665,17 +686,26 @@ async function handleDelete(member: StaffMember) {
           </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-black/70 mb-1"
+          <label
+            for="edit-staff-program"
+            class="block text-sm font-medium text-black/70 mb-1"
             >Assigned Program</label
           >
           <select
+            id="edit-staff-program"
             v-model="editProgram"
             required
-            :disabled="!editUnit"
+            :disabled="!editUnit || categoriesLoading"
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue disabled:bg-black/5"
           >
             <option value="" disabled>
-              {{ editUnit ? "Select a program" : "Select a unit first" }}
+              {{
+                categoriesLoading
+                  ? "Loading programs..."
+                  : editUnit
+                    ? "Select a program"
+                    : "Select a unit first"
+              }}
             </option>
             <option
               v-for="p in editAvailablePrograms"

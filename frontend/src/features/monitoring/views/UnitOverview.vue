@@ -12,7 +12,7 @@ import { programs } from "../data/mockMonitoring";
         OO1 Monitoring Hub
       </h1>
       <p class="text-white/80 text-sm mt-1">
-        Prototype — click a program to view its monitoring periods
+        Click a program to view its monitoring periods
       </p>
     </header>
 

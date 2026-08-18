@@ -5,10 +5,21 @@ import { getFileById } from "../data/fileStore";
 import type { ParsedFileData } from "../composables/useProgramFiles";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { formatCurrency } from "../../../utils/format";
+import { useRouter } from "vue-router";
 
 const props = defineProps<{ programId: string; uploadId: string }>();
 const program = computed(() => getProgram(props.programId));
+const router = useRouter();
 
+const periodId = computed(() => {
+  const first = parsedData.value?.periods[0];
+  if (!first) return null;
+  return first.quarter ? `${first.year}-${first.quarter}` : `${first.year}`;
+});
+
+function goBack() {
+  router.back();
+}
 const loading = ref(true);
 const error = ref<string | null>(null);
 const fileName = ref("");
@@ -99,6 +110,24 @@ function handlePrint() {
         Source: {{ fileName }} • Uploaded {{ formatDate(uploadedAt) }} by
         {{ uploadedByName }}
       </p>
+      <div class="flex items-center gap-4 mt-3">
+        <button
+          @click="goBack"
+          class="text-sm text-white/90 hover:text-white hover:underline"
+        >
+          ← Back
+        </button>
+        <router-link
+          v-if="!loading && parsedData && periodId"
+          :to="{
+            name: 'period-scopes',
+            params: { programId: props.programId, periodId },
+          }"
+          class="text-sm text-white/90 hover:text-white hover:underline"
+        >
+          View Dashboard →
+        </router-link>
+      </div>
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
