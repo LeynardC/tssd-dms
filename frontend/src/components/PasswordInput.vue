@@ -46,7 +46,7 @@ const showPassword = ref(false);
         type="button"
         @click="showPassword = !showPassword"
         :aria-label="showPassword ? 'Hide password' : 'Show password'"
-        class="absolute inset-y-0 right-0 flex items-center px-3 text-black/40 hover:text-black/70"
+        class="absolute inset-y-0 right-0 flex items-center px-3 text-black/60 hover:text-black/70"
         tabindex="-1"
       >
         <svg
