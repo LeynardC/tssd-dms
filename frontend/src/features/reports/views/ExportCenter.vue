@@ -155,7 +155,7 @@ function onProgramChange() {
         </button>
       </div>
 
-      <p class="text-xs text-black/40 italic mt-4">
+      <p class="text-xs text-black/60 italic mt-4">
         The exported file includes every province's target, actual, balance, and
         source sheet for the selected period.
       </p>
