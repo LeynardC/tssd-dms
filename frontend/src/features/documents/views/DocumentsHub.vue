@@ -16,7 +16,7 @@ if (currentRole.value === "staff") {
   onMounted(() => {
     router.replace({
       name: "file-explorer",
-      params: { programId: assignedProgram.value },
+      params: { programId: assignedProgram.value, folderPath: [] },
     });
   });
 }
@@ -48,9 +48,19 @@ const sortedPrograms = computed(() =>
         Select a program to view its files:
       </p>
 
-      <p v-if="categoriesLoading" class="text-sm text-black/50">
-        Loading programs...
-      </p>
+      <div
+        v-if="categoriesLoading"
+        class="grid gap-4 sm:grid-cols-2 animate-pulse"
+      >
+        <div
+          v-for="i in 4"
+          :key="i"
+          class="bg-white border border-black/10 rounded-lg p-5"
+        >
+          <div class="h-5 w-32 bg-black/10 rounded mb-2"></div>
+          <div class="h-4 w-20 bg-black/10 rounded"></div>
+        </div>
+      </div>
       <p v-else-if="categoriesError" class="text-sm text-red-600">
         {{ categoriesError }}
       </p>
@@ -62,7 +72,10 @@ const sortedPrograms = computed(() =>
         <router-link
           v-for="program in sortedPrograms"
           :key="program.code"
-          :to="{ name: 'file-explorer', params: { programId: program.code } }"
+          :to="{
+            name: 'file-explorer',
+            params: { programId: program.code, folderPath: [] },
+          }"
           class="block bg-white border border-black/10 rounded-lg p-5 hover:border-dole-blue hover:shadow-md transition"
         >
           <p class="font-display text-lg font-semibold text-dole-blue">
