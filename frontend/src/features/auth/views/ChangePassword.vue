@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import {
   changePassword,
@@ -17,11 +17,36 @@ const confirmPassword = ref("");
 const error = ref("");
 const loading = ref(false);
 
+// Live requirement checks — mirrors the backend's actual policy
+// (PasswordValidationRules.php: min 12, mixed case, numbers, symbols).
+// Client-side check is for immediate feedback only; the server is always
+// the source of truth and re-validates independently.
+const meetsLength = computed(() => newPassword.value.length >= 12);
+const hasUppercase = computed(() => /[A-Z]/.test(newPassword.value));
+const hasLowercase = computed(() => /[a-z]/.test(newPassword.value));
+const hasNumber = computed(() => /[0-9]/.test(newPassword.value));
+const hasSymbol = computed(() => /[^A-Za-z0-9]/.test(newPassword.value));
+
+const allRequirementsMet = computed(
+  () =>
+    meetsLength.value &&
+    hasUppercase.value &&
+    hasLowercase.value &&
+    hasNumber.value &&
+    hasSymbol.value,
+);
+
+const passwordsMatch = computed(
+  () =>
+    confirmPassword.value.length > 0 &&
+    newPassword.value === confirmPassword.value,
+);
+
 async function handleSubmit() {
   error.value = "";
 
-  if (newPassword.value.length < 8) {
-    error.value = "New password must be at least 8 characters.";
+  if (!allRequirementsMet.value) {
+    error.value = "Please meet all password requirements listed below.";
     return;
   }
   if (newPassword.value !== confirmPassword.value) {
@@ -87,15 +112,48 @@ async function handleSubmit() {
           label="New password"
           v-model="newPassword"
           autocomplete="new-password"
-          :minlength="8"
+          :minlength="12"
         />
+
+        <ul
+          v-if="newPassword"
+          class="text-xs space-y-1 -mt-2 bg-black/3 rounded p-3"
+        >
+          <li :class="meetsLength ? 'text-green-700' : 'text-black/50'">
+            {{ meetsLength ? "✓" : "○" }} At least 12 characters
+          </li>
+          <li
+            :class="
+              hasUppercase && hasLowercase ? 'text-green-700' : 'text-black/50'
+            "
+          >
+            {{ hasUppercase && hasLowercase ? "✓" : "○" }} Upper and lowercase
+            letters
+          </li>
+          <li :class="hasNumber ? 'text-green-700' : 'text-black/50'">
+            {{ hasNumber ? "✓" : "○" }} At least one number
+          </li>
+          <li :class="hasSymbol ? 'text-green-700' : 'text-black/50'">
+            {{ hasSymbol ? "✓" : "○" }} At least one symbol
+          </li>
+        </ul>
+
         <PasswordInput
           id="change-password-confirm"
           label="Confirm new password"
           v-model="confirmPassword"
           autocomplete="new-password"
-          :minlength="8"
+          :minlength="12"
         />
+        <p
+          v-if="confirmPassword"
+          class="text-xs -mt-2"
+          :class="passwordsMatch ? 'text-green-700' : 'text-red-600'"
+        >
+          {{
+            passwordsMatch ? "✓ Passwords match" : "✕ Passwords do not match"
+          }}
+        </p>
         <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
         <button
           type="submit"

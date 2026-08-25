@@ -3,6 +3,9 @@ import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { login, getCurrentUser, ApiError } from "../authService";
 import { setCurrentUser } from "../authStore";
+import { twoFactorChallenge } from "../data/twoFactorService";
+import { loginWithPasskey } from "../data/passkeyService";
+import doleLogo from "../../../assets/dole-logo.png";
 
 const router = useRouter();
 const username = ref("");
@@ -11,11 +14,53 @@ const error = ref("");
 const loading = ref(false);
 const showPassword = ref(false); // NEW
 
+const awaitingTwoFactor = ref(false);
+const twoFactorCode = ref("");
+const useRecoveryCode = ref(false);
+const recoveryCodeInput = ref("");
+const twoFactorError = ref("");
+const passkeyLoading = ref(false);
+
+async function handlePasskeyLogin() {
+  error.value = "";
+  passkeyLoading.value = true;
+  try {
+    await loginWithPasskey();
+    const user = await getCurrentUser();
+    if (!user) {
+      error.value = "Signed in but the session could not be confirmed.";
+      return;
+    }
+    setCurrentUser(user);
+    router.push("/monitoring");
+  } catch (err) {
+    // Covers both a cancelled/failed WebAuthn prompt and a real server
+    // rejection — either way, this isn't the user's password failing,
+    // so keep the message specific to passkeys rather than reusing the
+    // generic login error copy.
+    error.value =
+      err instanceof ApiError
+        ? err.message
+        : "Passkey sign-in didn't work. You can try again or use your password.";
+  } finally {
+    passkeyLoading.value = false;
+  }
+}
+
 async function handleSubmit() {
   error.value = "";
   loading.value = true;
   try {
-    await login(username.value.trim().toLowerCase(), password.value);
+    const result = await login(
+      username.value.trim().toLowerCase(),
+      password.value,
+    );
+    if (result.two_factor) {
+      // Fortify itself told us 2FA is required — no speculative
+      // getCurrentUser() call, no false-alarm 401 in the console.
+      awaitingTwoFactor.value = true;
+      return;
+    }
     const user = await getCurrentUser();
     if (!user) {
       error.value =
@@ -35,12 +80,45 @@ async function handleSubmit() {
     loading.value = false;
   }
 }
+
+async function handleTwoFactorSubmit() {
+  twoFactorError.value = "";
+  loading.value = true;
+  try {
+    await twoFactorChallenge(
+      useRecoveryCode.value
+        ? { recovery_code: recoveryCodeInput.value }
+        : { code: twoFactorCode.value },
+    );
+    const user = await getCurrentUser();
+    if (!user) {
+      twoFactorError.value = "Could not confirm the session. Please try again.";
+      return;
+    }
+    setCurrentUser(user);
+    router.push("/monitoring");
+  } catch (err) {
+    twoFactorError.value =
+      err instanceof ApiError
+        ? err.errors
+          ? Object.values(err.errors).flat().join(" ")
+          : err.message
+        : "That code didn't work. Please try again.";
+  } finally {
+    loading.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="min-h-screen bg-paper flex items-center justify-center px-8">
     <div class="max-w-md w-full">
       <div class="text-center mb-10">
+        <img
+          :src="doleLogo"
+          alt="DOLE Logo"
+          class="w-20 h-20 mx-auto mb-4 object-contain"
+        />
         <p class="text-sm tracking-wide text-dole-blue/70 uppercase">
           DOLE MIMAROPA — TSSD
         </p>
@@ -49,6 +127,7 @@ async function handleSubmit() {
         </h1>
       </div>
       <form
+        v-if="!awaitingTwoFactor"
         @submit.prevent="handleSubmit"
         class="bg-white border-2 border-black/10 rounded-lg p-8 space-y-5"
       >
@@ -86,7 +165,7 @@ async function handleSubmit() {
               type="button"
               @click="showPassword = !showPassword"
               :aria-label="showPassword ? 'Hide password' : 'Show password'"
-              class="absolute inset-y-0 right-0 flex items-center px-3 text-black/40 hover:text-black/70"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-black/60 hover:text-black/70"
               tabindex="-1"
             >
               <!-- Eye (visible) icon -->
@@ -132,6 +211,85 @@ async function handleSubmit() {
           class="w-full bg-dole-blue text-white rounded py-2 font-medium disabled:opacity-50"
         >
           {{ loading ? "Signing in..." : "Sign In" }}
+        </button>
+
+        <div class="flex items-center gap-3 my-4">
+          <div class="flex-1 h-px bg-black/10" />
+          <span class="text-xs text-black/60 uppercase tracking-wide">or</span>
+          <div class="flex-1 h-px bg-black/10" />
+        </div>
+
+        <button
+          type="button"
+          @click="handlePasskeyLogin"
+          :disabled="passkeyLoading"
+          class="w-full border border-dole-blue text-dole-blue rounded py-2 font-medium hover:bg-dole-blue/5 transition disabled:opacity-50"
+        >
+          {{ passkeyLoading ? "Verifying…" : "Sign in with a passkey" }}
+        </button>
+      </form>
+
+      <form
+        v-else
+        @submit.prevent="handleTwoFactorSubmit"
+        class="bg-white border-2 border-black/10 rounded-lg p-8 space-y-5"
+      >
+        <p class="text-sm text-black/60">
+          Enter the code from your authenticator app.
+        </p>
+        <div v-if="!useRecoveryCode">
+          <label
+            for="tfa-login-code"
+            class="block text-sm font-medium text-black/70 mb-1"
+            >6-digit code</label
+          >
+          <input
+            id="tfa-login-code"
+            v-model="twoFactorCode"
+            type="text"
+            inputmode="numeric"
+            maxlength="6"
+            autofocus
+            class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
+          />
+        </div>
+        <div v-else>
+          <label
+            for="tfa-login-recovery"
+            class="block text-sm font-medium text-black/70 mb-1"
+            >Recovery code</label
+          >
+          <input
+            id="tfa-login-recovery"
+            v-model="recoveryCodeInput"
+            type="text"
+            autofocus
+            class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
+          />
+        </div>
+        <p v-if="twoFactorError" class="text-sm text-red-600">
+          {{ twoFactorError }}
+        </p>
+        <button
+          type="submit"
+          :disabled="loading"
+          class="w-full bg-dole-blue text-white rounded py-2 font-medium disabled:opacity-50"
+        >
+          {{ loading ? "Verifying..." : "Verify" }}
+        </button>
+        <button
+          type="button"
+          @click="
+            useRecoveryCode = !useRecoveryCode;
+            twoFactorError = '';
+          "
+          class="w-full text-sm text-dole-blue hover:underline"
+        >
+          {{
+            useRecoveryCode
+              ? "Use an authenticator code instead"
+              : "Use a recovery code instead"
+          }}
         </button>
       </form>
     </div>

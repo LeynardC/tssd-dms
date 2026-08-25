@@ -11,6 +11,7 @@ export interface CurrentUser {
   must_change_password: boolean;
   profile_completed: boolean;
   role: "chief" | "staff";
+  two_factor_enabled: boolean;
 }
 
 interface ApiErrorBody {
@@ -79,13 +80,21 @@ export async function apiFetch<T>(
   return body as T;
 }
 
-export async function login(username: string, password: string): Promise<void> {
+export interface LoginResult {
+  two_factor?: boolean;
+}
+
+export async function login(
+  username: string,
+  password: string,
+): Promise<LoginResult> {
   const xsrf = await getXsrfToken();
-  await apiFetch("/login", {
+  const result = await apiFetch<LoginResult | null>("/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
     xsrf,
   });
+  return result ?? {};
 }
 
 export async function logout(): Promise<void> {
