@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, computed } from "vue";
 import {
   createStaffAccount,
   getStaffList,
@@ -19,6 +19,7 @@ import {
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import Modal from "../../../components/Modal.vue";
+import { useFloatingMenu } from "../../../composables/useFloatingMenu";
 
 const { confirmAction } = useConfirm();
 const { showToast } = useToast();
@@ -87,6 +88,16 @@ function dismissReveal() {
 const staff = ref<StaffMember[]>([]);
 const loadingStaff = ref(true);
 const listError = ref("");
+const staffFilter = ref("");
+
+const filteredStaff = computed(() => {
+  const q = staffFilter.value.trim().toLowerCase();
+  if (!q) return staff.value;
+  return staff.value.filter(
+    (m) =>
+      m.name.toLowerCase().includes(q) || m.username.toLowerCase().includes(q),
+  );
+});
 
 async function loadStaff() {
   loadingStaff.value = true;
@@ -123,69 +134,13 @@ function onboardingStatus(member: StaffMember): string {
   return "Onboarded";
 }
 
-// --- Kebab menu: fixed-position overlay, teleported to <body> ---
-const openMenuMember = ref<StaffMember | null>(null);
-const menuPosition = ref({ top: 0, left: 0 });
-const activeButtonEl = ref<HTMLElement | null>(null);
-
-const MENU_WIDTH = 176;
-const MENU_HEIGHT_ESTIMATE = 200;
-const VIEWPORT_MARGIN = 8;
-
-function computePosition(button: HTMLElement) {
-  const rect = button.getBoundingClientRect();
-
-  let left = rect.right - MENU_WIDTH;
-  left = Math.max(VIEWPORT_MARGIN, left);
-  left = Math.min(left, window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN);
-
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const top =
-    spaceBelow >= MENU_HEIGHT_ESTIMATE
-      ? rect.bottom + 4
-      : rect.top - MENU_HEIGHT_ESTIMATE - 4;
-
-  return { top: Math.max(VIEWPORT_MARGIN, top), left };
-}
-
-function toggleMenu(member: StaffMember, event: MouseEvent) {
-  if (openMenuMember.value?.id === member.id) {
-    closeMenu();
-    return;
-  }
-  const button = event.currentTarget as HTMLElement;
-  activeButtonEl.value = button;
-  menuPosition.value = computePosition(button);
-  openMenuMember.value = member;
-}
-
-function closeMenu() {
-  openMenuMember.value = null;
-  activeButtonEl.value = null;
-}
-
-// A floating menu should track its anchor button as the page (or the
-// table's own scroll container) scrolls — not just disappear. Only close
-// it automatically if the button has scrolled fully out of view, since a
-// menu with no visible anchor point looks disconnected and confusing.
-function handleReposition() {
-  if (!activeButtonEl.value) return;
-  const rect = activeButtonEl.value.getBoundingClientRect();
-  const fullyOffscreen =
-    rect.bottom < 0 ||
-    rect.top > window.innerHeight ||
-    rect.right < 0 ||
-    rect.left > window.innerWidth;
-  if (fullyOffscreen) {
-    closeMenu();
-    return;
-  }
-  menuPosition.value = computePosition(activeButtonEl.value);
-}
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") closeMenu();
-}
+// --- Kebab menu (shared floating-menu logic — see useFloatingMenu.ts) ---
+const {
+  openTarget: openMenuMember,
+  position: menuPosition,
+  openMenu: toggleMenu,
+  closeMenu,
+} = useFloatingMenu<StaffMember>({ menuWidth: 176, menuHeightEstimate: 200 });
 
 function menuEdit(member: StaffMember) {
   closeMenu();
@@ -203,19 +158,6 @@ function menuDelete(member: StaffMember) {
   closeMenu();
   handleDelete(member);
 }
-
-onMounted(() => {
-  window.addEventListener("click", closeMenu);
-  window.addEventListener("scroll", handleReposition, true);
-  window.addEventListener("resize", handleReposition);
-  window.addEventListener("keydown", handleKeydown);
-});
-onUnmounted(() => {
-  window.removeEventListener("click", closeMenu);
-  window.removeEventListener("scroll", handleReposition, true);
-  window.removeEventListener("resize", handleReposition);
-  window.removeEventListener("keydown", handleKeydown);
-});
 
 // --- Row actions: toggle active ---
 async function handleToggleActive(member: StaffMember) {
@@ -465,67 +407,88 @@ async function handleDelete(member: StaffMember) {
           No staff accounts yet. Create one above.
         </p>
 
-        <div v-else class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-black/50 border-b border-black/10">
-                <th class="pb-2 pr-3">Name</th>
-                <th class="pb-2 pr-3">Username</th>
-                <th class="pb-2 pr-3">Unit / Program</th>
-                <th class="pb-2 pr-3">Status</th>
-                <th class="pb-2 pr-3">Onboarding</th>
-                <th class="pb-2 pr-3">View</th>
-                <th class="pb-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="member in staff"
-                :key="member.id"
-                class="border-b border-black/5 last:border-0 transition-colors"
-                :class="member.is_active ? '' : 'bg-red-50/40 text-black/40'"
-              >
-                <td class="py-2 pr-3 font-medium">{{ member.name }}</td>
-                <td class="py-2 pr-3 text-black/70">{{ member.username }}</td>
-                <td class="py-2 pr-3 text-black/70">
-                  {{ unitLabel(member.unit) }} /
-                  {{ programLabel(member.assigned_program) }}
-                </td>
-                <td class="py-2 pr-3">
-                  <span
-                    class="text-xs px-2 py-0.5 rounded-full font-medium"
-                    :class="
-                      member.is_active
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-700'
-                    "
-                  >
-                    {{ member.is_active ? "Active" : "Inactive" }}
-                  </span>
-                </td>
-                <td class="py-2 pr-3 text-xs text-black/50">
-                  {{ onboardingStatus(member) }}
-                </td>
-                <td class="py-2 pr-3">
-                  <button
-                    @click="detailsTarget = member"
-                    class="text-xs text-dole-blue hover:underline"
-                  >
-                    View
-                  </button>
-                </td>
-                <td class="py-2 text-right">
-                  <button
-                    @click.stop="toggleMenu(member, $event)"
-                    class="w-8 h-8 inline-flex items-center justify-center rounded hover:bg-black/5 text-black/50 hover:text-black text-lg leading-none"
-                    aria-label="Actions"
-                  >
-                    ⋮
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-else>
+          <div class="relative w-56 mb-3">
+            <input
+              v-model="staffFilter"
+              type="text"
+              placeholder="Filter by name or username..."
+              class="w-full border border-black/20 rounded px-3 py-1.5 pr-7 text-sm focus:outline-none focus:border-dole-blue"
+            />
+            <button
+              v-if="staffFilter"
+              @click="staffFilter = ''"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-black/60 hover:text-black/70 text-sm leading-none"
+              aria-label="Clear filter"
+            >
+              ✕
+            </button>
+          </div>
+          <p v-if="filteredStaff.length === 0" class="text-sm text-black/50">
+            No staff match "{{ staffFilter }}".
+          </p>
+          <div v-else class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-black/50 border-b border-black/10">
+                  <th class="pb-2 pr-3">Name</th>
+                  <th class="pb-2 pr-3">Username</th>
+                  <th class="pb-2 pr-3">Unit / Program</th>
+                  <th class="pb-2 pr-3">Status</th>
+                  <th class="pb-2 pr-3">Onboarding</th>
+                  <th class="pb-2 pr-3">View</th>
+                  <th class="pb-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="member in filteredStaff"
+                  :key="member.id"
+                  class="border-b border-black/5 last:border-0 transition-colors"
+                  :class="member.is_active ? '' : 'bg-red-50/40 text-black/60'"
+                >
+                  <td class="py-2 pr-3 font-medium">{{ member.name }}</td>
+                  <td class="py-2 pr-3 text-black/70">{{ member.username }}</td>
+                  <td class="py-2 pr-3 text-black/70">
+                    {{ unitLabel(member.unit) }} /
+                    {{ programLabel(member.assigned_program) }}
+                  </td>
+                  <td class="py-2 pr-3">
+                    <span
+                      class="text-xs px-2 py-0.5 rounded-full font-medium"
+                      :class="
+                        member.is_active
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700'
+                      "
+                    >
+                      {{ member.is_active ? "Active" : "Inactive" }}
+                    </span>
+                  </td>
+                  <td class="py-2 pr-3 text-xs text-black/50">
+                    {{ onboardingStatus(member) }}
+                  </td>
+                  <td class="py-2 pr-3">
+                    <button
+                      @click="detailsTarget = member"
+                      class="text-xs text-dole-blue hover:underline"
+                    >
+                      View
+                    </button>
+                  </td>
+                  <td class="py-2 text-right">
+                    <button
+                      @click.stop="toggleMenu(member, $event)"
+                      class="w-8 h-8 inline-flex items-center justify-center rounded hover:bg-black/5 text-black/50 hover:text-black text-lg leading-none"
+                      aria-label="Actions"
+                    >
+                      ⋮
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </main>
