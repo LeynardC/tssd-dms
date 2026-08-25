@@ -397,6 +397,40 @@ export const programs: ProgramInfo[] = [
   },
 ];
 
+export interface MonitoringSearchResult {
+  programId: string;
+  programName: string;
+  year: number;
+  quarter?: string;
+  scope: string;
+}
+
+// Client-side search across every program's static period data — matches
+// on scope (province/region name). Used by the app-wide "search everywhere"
+// panel; no backend call needed since this data is already fully loaded.
+export function searchMonitoringScopes(
+  query: string,
+): MonitoringSearchResult[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  const results: MonitoringSearchResult[] = [];
+  for (const program of programs) {
+    for (const period of program.periods) {
+      if (period.scope.toLowerCase().includes(q)) {
+        results.push({
+          programId: program.id,
+          programName: program.name,
+          year: period.year,
+          quarter: period.quarter,
+          scope: period.scope,
+        });
+      }
+    }
+  }
+  return results;
+}
+
 export function getProgram(id: string): ProgramInfo | undefined {
   return programs.find((p) => p.id === id);
 }
