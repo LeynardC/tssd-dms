@@ -8,6 +8,8 @@ use Illuminate\Validation\Rule;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ActivityLogController;
+use App\Http\Controllers\SearchController;
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
@@ -23,6 +25,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         return response()->json([
             ...$user->toArray(),
             'role' => $user->getRoleNames()->first(),
+            'two_factor_enabled' => $user->two_factor_confirmed_at !== null,
         ]);
     });
 
@@ -64,6 +67,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/files', [FileController::class, 'index']);
     Route::post('/files', [FileController::class, 'store']);
+    Route::get('/user/passkeys', function (Request $request) {
+        return response()->json([
+            'passkeys' => $request->user()->passkeys()
+                ->select(['id', 'name', 'last_used_at', 'created_at'])
+                ->orderByDesc('created_at')
+                ->get(),
+        ]);
+    });
+
+    Route::get('/files/{file}', [FileController::class, 'show']);
     Route::get('/files/{file}', [FileController::class, 'show']);
     Route::get('/files/{file}/download', [FileController::class, 'download']);
     Route::get('/files/{file}/preview', [FileController::class, 'preview']);
@@ -71,6 +84,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::patch('/files/{file}/move', [FileController::class, 'move']);
     Route::patch('/files/{file}/toggle-lock', [FileController::class, 'toggleLock']);
     Route::delete('/files/{file}', [FileController::class, 'destroy']);
+
+
+    Route::get('/activity-log', [ActivityLogController::class, 'index']);
+
+    Route::get('/search', [SearchController::class, 'index']);
+
     #endregion
 
 

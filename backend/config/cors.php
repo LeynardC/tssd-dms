@@ -15,20 +15,41 @@ return [
     |
     */
 
-'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'logout', 'user/password', 'user/profile-information', 'two-factor-challenge'],
+    'paths' => [
+        'api/*',
+        'sanctum/csrf-cookie',
+        'login',
+        'logout',
+        'user/password',
+        'user/profile-information',
+        'user/confirm-password',
+        'user/confirmed-password-status',
+        'user/two-factor-authentication',
+        'user/two-factor-qr-code',
+        'user/two-factor-secret-key',
+        'user/confirmed-two-factor-authentication',
+        'user/two-factor-recovery-codes',
+        'user/passkeys*',
+        'two-factor-challenge',
+        'passkeys/login',
+        'passkeys/login/options',
+    ],
 
-'allowed_methods' => ['*'],
+    'allowed_methods' => ['*'],
 
-'allowed_origins' => ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    'allowed_origins' => array_filter(array_map(
+        'trim',
+        explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173'))
+    )),
 
-'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [],
 
-'allowed_headers' => ['*'],
+    'allowed_headers' => ['*'],
 
-'exposed_headers' => [],
+    'exposed_headers' => [],
 
-'max_age' => 0,
+    'max_age' => 0,
 
-'supports_credentials' => true,
+    'supports_credentials' => true,
 
 ];

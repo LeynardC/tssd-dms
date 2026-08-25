@@ -146,7 +146,10 @@ return [
 
     'passkeys' => [
         'relying_party_id' => parse_url(config('app.url'), PHP_URL_HOST),
-        'allowed_origins' => [config('app.url')],
+        'allowed_origins' => array_filter(array_map(
+            'trim',
+            explode(',', env('PASSKEY_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173'))
+        )),
         'timeout' => 60000,
     ],
 
