@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { FolderRecord } from "../data/folderStore";
 import type { FileRecord } from "../data/fileStore";
+import { Folder, FileText, MoreVertical } from "@lucide/vue";
 
 const props = defineProps<{
   layout: "grid" | "list";
@@ -38,7 +39,7 @@ const sizeLabel = computed(() => {
   if (kb < 1024) return `${kb.toFixed(1)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
 });
-const icon = computed(() => (props.kind === "folder" ? "📁" : "📄"));
+const icon = computed(() => (props.kind === "folder" ? Folder : FileText));
 </script>
 
 <template>
@@ -50,18 +51,18 @@ const icon = computed(() => (props.kind === "folder" ? "📁" : "📄"));
   >
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 min-w-0">
-        <span>{{ icon }}</span>
+        <component :is="icon" :size="18" class="text-black/50 shrink-0" />
         <span
           class="text-sm truncate"
-          :class="{ 'text-black/40': file?.locked }"
+          :class="{ 'text-black/60': file?.locked }"
         >
           {{ name }}
-          <span v-if="file?.locked" class="text-xs text-black/40 ml-1"
+          <span v-if="file?.locked" class="text-xs text-black/60 ml-1"
             >(locked)</span
           >
         </span>
       </div>
-      <p class="text-xs text-black/40 truncate mt-0.5 sm:hidden">
+      <p class="text-xs text-black/60 truncate mt-0.5 sm:hidden">
         {{ ownerName }} • {{ modifiedAt }} • {{ sizeLabel }}
       </p>
     </div>
@@ -76,7 +77,7 @@ const icon = computed(() => (props.kind === "folder" ? "📁" : "📄"));
       class="w-8 h-8 inline-flex items-center justify-center rounded hover:bg-black/10 text-black/50 hover:text-black opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition shrink-0"
       aria-label="Actions"
     >
-      ⋮
+      <MoreVertical :size="18" />
     </button>
   </div>
 
@@ -92,15 +93,15 @@ const icon = computed(() => (props.kind === "folder" ? "📁" : "📄"));
       class="absolute top-2 right-2 w-7 h-7 inline-flex items-center justify-center rounded hover:bg-black/10 text-black/50 hover:text-black opacity-0 group-hover:opacity-100 transition"
       aria-label="Actions"
     >
-      ⋮
+      <MoreVertical :size="16" />
     </button>
-    <div class="text-3xl mb-2">{{ icon }}</div>
+    <component :is="icon" :size="32" class="text-black/60 mb-2" />
     <p
       class="text-sm font-medium truncate"
-      :class="{ 'text-black/40': file?.locked }"
+      :class="{ 'text-black/60': file?.locked }"
     >
       {{ name }}
     </p>
-    <p v-if="file" class="text-xs text-black/40 mt-1">{{ sizeLabel }}</p>
+    <p v-if="file" class="text-xs text-black/60 mt-1">{{ sizeLabel }}</p>
   </div>
 </template>
