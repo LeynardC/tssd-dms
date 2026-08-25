@@ -93,7 +93,19 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
-      <div v-if="loading" class="text-black/50 text-sm">Loading…</div>
+      <div v-if="loading" class="animate-pulse">
+        <div class="h-4 w-40 bg-black/10 rounded mb-3"></div>
+        <div class="h-5 w-48 bg-black/10 rounded mb-3"></div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <div
+            v-for="i in 6"
+            :key="i"
+            class="bg-white border border-black/10 rounded-lg p-4"
+          >
+            <div class="h-4 w-24 bg-black/10 rounded"></div>
+          </div>
+        </div>
+      </div>
 
       <div
         v-else-if="error"
@@ -138,7 +150,7 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
           v-if="showReallocation && unutilizedFunds.length"
           class="bg-white border border-black/10 rounded-lg p-5 mb-6"
         >
-          <p class="text-[11px] text-black/40 mb-3">
+          <p class="text-xs text-black/60 mb-3">
             from "Takers of unutilized SPES funds" — LGU-level, not mapped to
             province
           </p>
@@ -187,4 +199,5 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
       </template>
     </main>
   </div>
+  <div v-else class="p-8 text-black/60">Program not found.</div>
 </template>

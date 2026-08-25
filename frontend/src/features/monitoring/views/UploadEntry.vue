@@ -15,6 +15,7 @@ import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { useProgramFiles } from "../composables/useProgramFiles";
 import FolderPickerModal from "../components/FolderPickerModal.vue";
+import { Folder } from "@lucide/vue";
 
 const { showToast } = useToast();
 const router = useRouter();
@@ -201,7 +202,7 @@ async function handleConfirmSave() {
           @click="showFolderPicker = true"
           class="flex items-center gap-2 w-full text-left text-sm border border-black/20 rounded p-2 mb-4 hover:border-dole-blue transition"
         >
-          <span>📁</span>
+          <Folder :size="16" class="text-black/60 shrink-0" />
           <span class="truncate">{{ selectedFolderLabel }}</span>
         </button>
 
@@ -286,7 +287,7 @@ async function handleConfirmSave() {
             <span v-if="m.target !== null"
               >/ Target: {{ m.target.toLocaleString() }}</span
             >
-            <span v-else class="italic text-black/40">/ Target: TBD</span>
+            <span v-else class="italic text-black/60">/ Target: TBD</span>
           </p>
         </div>
 

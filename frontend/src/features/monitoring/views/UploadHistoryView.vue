@@ -131,7 +131,28 @@ function handlePrint() {
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
-      <div v-if="loading" class="text-black/50 text-sm">Loading…</div>
+      <div v-if="loading" class="animate-pulse">
+        <div class="flex justify-end mb-6">
+          <div class="h-8 w-20 bg-black/10 rounded"></div>
+        </div>
+        <div
+          v-for="i in 2"
+          :key="i"
+          class="bg-white border border-black/10 rounded-lg p-6 mb-4"
+        >
+          <div class="flex justify-between items-baseline mb-4">
+            <div class="h-5 w-32 bg-black/10 rounded"></div>
+            <div class="h-4 w-20 bg-black/10 rounded"></div>
+          </div>
+          <div v-for="j in 2" :key="j" class="mb-4 last:mb-0">
+            <div class="flex justify-between mb-1">
+              <div class="h-4 w-24 bg-black/10 rounded"></div>
+              <div class="h-4 w-28 bg-black/10 rounded"></div>
+            </div>
+            <div class="w-full bg-black/5 rounded-full h-2"></div>
+          </div>
+        </div>
+      </div>
 
       <div
         v-else-if="error"
@@ -176,7 +197,7 @@ function handlePrint() {
               <span class="font-medium">{{ m.label }}</span>
               <span
                 :class="
-                  m.isPlaceholder ? 'text-black/40 italic' : 'text-black/70'
+                  m.isPlaceholder ? 'text-black/60 italic' : 'text-black/70'
                 "
               >
                 {{ formatValue(m) }} / Target: {{ formatTarget(m) }}

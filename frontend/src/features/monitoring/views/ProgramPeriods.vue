@@ -11,7 +11,6 @@ import {
 import PreviewModal from "../components/PreviewModal.vue";
 
 import { currentRole } from "../role";
-import RoleBadge from "../components/RoleBadge.vue";
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
@@ -109,10 +108,6 @@ function openPreview(file: FileRecord) {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
-      <div class="flex justify-end mb-2">
-        <RoleBadge />
-      </div>
-
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program.fullName }}
@@ -121,7 +116,19 @@ function openPreview(file: FileRecord) {
     </header>
 
     <main class="max-w-5xl mx-auto px-8 py-10">
-      <div v-if="loading" class="text-black/50 text-sm mb-4">Loading…</div>
+      <div v-if="loading" class="animate-pulse">
+        <div class="h-4 w-64 bg-black/10 rounded mb-4"></div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <div
+            v-for="i in 3"
+            :key="i"
+            class="bg-white border border-black/10 rounded-lg p-4"
+          >
+            <div class="h-4 w-24 bg-black/10 rounded mb-2"></div>
+            <div class="h-3 w-32 bg-black/10 rounded"></div>
+          </div>
+        </div>
+      </div>
 
       <div
         v-else-if="error"
@@ -220,7 +227,7 @@ function openPreview(file: FileRecord) {
           <p class="text-black/50 text-sm">
             No monitoring data has been uploaded yet for {{ program.name }}.
           </p>
-          <p class="text-black/40 text-xs mt-1">
+          <p class="text-black/60 text-xs mt-1">
             Use "+ Upload New File" above to add the first monitoring file.
           </p>
         </div>
@@ -238,7 +245,7 @@ function openPreview(file: FileRecord) {
               <p class="font-semibold text-dole-blue">{{ p.label }}</p>
               <span
                 v-if="p.warningCount > 0"
-                class="text-[11px] bg-dole-red/10 text-dole-red px-2 py-0.5 rounded-full font-medium"
+                class="text-xs bg-dole-red/10 text-dole-red px-2 py-0.5 rounded-full font-medium"
                 :title="p.warningCount + ' warning(s) at time of upload'"
               >
                 ⚠ {{ p.warningCount }}

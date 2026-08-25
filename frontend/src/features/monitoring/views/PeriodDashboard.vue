@@ -4,6 +4,16 @@ import { getProgram, balance, type Metric } from "../data/mockMonitoring";
 import { useProgramFiles } from "../composables/useProgramFiles";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { formatCurrency } from "../../../utils/format";
+import {
+  AlertTriangle,
+  DollarSign,
+  Handshake,
+  FileText,
+  CheckCircle,
+  Banknote,
+  Clock,
+  Pin,
+} from "@lucide/vue";
 
 const props = defineProps<{
   programId: string;
@@ -118,7 +128,7 @@ const quarterlyWithTrend = computed(() => {
 });
 
 interface NoteChip {
-  icon: string;
+  icon: typeof AlertTriangle;
   label: string;
   text: string;
 }
@@ -126,20 +136,20 @@ interface NoteChip {
 function categorizeNote(text: string): NoteChip {
   const t = text.toLowerCase();
   if (t.includes("significantly exceeds target"))
-    return { icon: "⚠️", label: "Data Quality", text };
+    return { icon: AlertTriangle, label: "Data Quality", text };
   if (t.includes("additional fund needed"))
-    return { icon: "💰", label: "Fund Needed", text };
+    return { icon: DollarSign, label: "Fund Needed", text };
   if (t.includes("100% counterpart"))
-    return { icon: "🤝", label: "Counterpart", text };
+    return { icon: Handshake, label: "Counterpart", text };
   if (t.includes("documents/insurance"))
-    return { icon: "📋", label: "Documents", text };
+    return { icon: FileText, label: "Documents", text };
   if (t.includes("payment processing"))
-    return { icon: "✅", label: "Processing", text };
+    return { icon: CheckCircle, label: "Processing", text };
   if (t.includes("cost-share split"))
-    return { icon: "💵", label: "Cost Share", text };
+    return { icon: Banknote, label: "Cost Share", text };
   if (t.includes("avg. processing time"))
-    return { icon: "⏱️", label: "Speed", text };
-  return { icon: "📌", label: "Note", text };
+    return { icon: Clock, label: "Speed", text };
+  return { icon: Pin, label: "Note", text };
 }
 
 const openChipIndices = ref<Set<number>>(new Set());
@@ -159,8 +169,22 @@ function collapseAllChips() {
   openChipIndices.value = new Set();
 }
 const openSourceTooltip = ref<string | null>(null);
+
 function toggleSourceTooltip(id: string) {
-  openSourceTooltip.value = openSourceTooltip.value === id ? null : id;
+  if (openSourceTooltip.value === id) {
+    closeSourceTooltip();
+    return;
+  }
+  openSourceTooltip.value = id;
+  // Close on any click outside the tooltip. Registered fresh each time it
+  // opens, removed the moment it closes — same pattern as the kebab menu
+  // in FileExplorer.vue (showMenu/closeMenu).
+  setTimeout(() => document.addEventListener("click", closeSourceTooltip), 0);
+}
+
+function closeSourceTooltip() {
+  openSourceTooltip.value = null;
+  document.removeEventListener("click", closeSourceTooltip);
 }
 
 function formatValue(m: Metric): string {
@@ -209,7 +233,27 @@ function handlePrint() {
     </header>
 
     <main class="max-w-4xl mx-auto px-8 py-8">
-      <div v-if="loading" class="text-black/50 text-sm">Loading…</div>
+      <div v-if="loading" class="animate-pulse">
+        <div class="flex justify-end mb-4">
+          <div class="h-8 w-20 bg-black/10 rounded"></div>
+        </div>
+        <div class="bg-white border border-black/10 rounded-lg p-5 mb-4">
+          <div class="flex justify-between items-baseline mb-3">
+            <div class="h-5 w-32 bg-black/10 rounded"></div>
+            <div class="h-4 w-20 bg-black/10 rounded"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+            <div v-for="i in 4" :key="i">
+              <div class="h-3 w-20 bg-black/10 rounded mb-1.5"></div>
+              <div class="flex justify-between mb-1">
+                <div class="h-4 w-16 bg-black/10 rounded"></div>
+                <div class="h-3 w-20 bg-black/10 rounded"></div>
+              </div>
+              <div class="w-full bg-black/5 rounded-full h-1.5"></div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div
         v-else-if="error"
@@ -260,14 +304,15 @@ function handlePrint() {
                     v-if="m.sourceSheet"
                     type="button"
                     @click="toggleSourceTooltip(entry.scope + m.key)"
-                    class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black/10 text-black/50 text-[9px] hover:bg-black/20 transition"
+                    class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black/10 text-black/50 text-xs hover:bg-black/20 transition"
                     :aria-label="'Source: ' + m.sourceSheet"
                   >
                     i
                   </button>
                   <div
                     v-if="openSourceTooltip === entry.scope + m.key"
-                    class="absolute z-10 top-full left-0 mt-1 bg-black text-white text-[11px] rounded px-2 py-1 whitespace-nowrap shadow-lg"
+                    @click.stop
+                    class="absolute z-10 top-full left-0 mt-1 bg-black text-white text-xs rounded px-2 py-1 whitespace-nowrap shadow-lg"
                   >
                     Source: {{ m.sourceSheet }}
                   </div>
@@ -277,13 +322,13 @@ function handlePrint() {
                 <span
                   :class="
                     m.isPlaceholder
-                      ? 'text-black/40 italic'
+                      ? 'text-black/60 italic'
                       : 'text-dole-blue font-semibold'
                   "
                 >
                   {{ formatValue(m) }}
                 </span>
-                <span class="text-black/40 text-xs"
+                <span class="text-black/60 text-xs"
                   >/ Target: {{ formatTarget(m) }}</span
                 >
               </div>
@@ -294,10 +339,7 @@ function handlePrint() {
                   :style="{ width: progressPct(m) + '%' }"
                 />
               </div>
-              <p
-                v-if="m.target !== null"
-                class="text-[11px] text-black/40 mt-0.5"
-              >
+              <p v-if="m.target !== null" class="text-xs text-black/60 mt-0.5">
                 Balance: {{ formatBalance(m) }}
               </p>
             </div>
@@ -373,10 +415,7 @@ function handlePrint() {
                 </tr>
               </tbody>
             </table>
-            <p
-              v-if="showQuarterly"
-              class="text-[11px] text-black/40 italic mt-2"
-            >
+            <p v-if="showQuarterly" class="text-xs text-black/60 italic mt-2">
               Derived from actual payment dates. Cumulative % is vs. the annual
               target — no quarterly target exists in the source file.
             </p>
@@ -398,14 +437,15 @@ function handlePrint() {
                 v-for="(n, i) in entry.extraNotes"
                 :key="i"
                 @click="toggleChip(i)"
-                class="text-xs px-2.5 py-1 rounded-full border transition"
+                class="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition"
                 :class="
                   openChipIndices.has(i)
                     ? 'bg-dole-blue text-white border-dole-blue'
                     : 'bg-black/5 text-black/60 border-transparent hover:bg-black/10'
                 "
               >
-                {{ categorizeNote(n).icon }} {{ categorizeNote(n).label }}
+                <component :is="categorizeNote(n).icon" :size="12" />
+                {{ categorizeNote(n).label }}
               </button>
               <button
                 v-if="entry.extraNotes.length > 1"
@@ -427,13 +467,19 @@ function handlePrint() {
               <template v-for="(n, i) in entry.extraNotes" :key="i">
                 <div
                   v-if="openChipIndices.has(i)"
-                  class="text-xs text-black/70 bg-paper rounded p-3"
+                  class="flex items-start gap-1.5 text-xs text-black/70 bg-paper rounded p-3"
                 >
-                  {{ categorizeNote(n).icon }}
-                  <span class="font-medium"
-                    >{{ categorizeNote(n).label }}:</span
-                  >
-                  {{ n }}
+                  <component
+                    :is="categorizeNote(n).icon"
+                    :size="14"
+                    class="mt-0.5 shrink-0"
+                  />
+                  <span>
+                    <span class="font-medium"
+                      >{{ categorizeNote(n).label }}:</span
+                    >
+                    {{ n }}
+                  </span>
                 </div>
               </template>
             </div>
