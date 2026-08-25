@@ -36,7 +36,7 @@ function formatVal(v: number): string {
     <h3 class="font-display text-base font-semibold text-dole-blue mb-1">
       {{ title }}
     </h3>
-    <p v-if="subtitle" class="text-[11px] text-black/40 mb-2">
+    <p v-if="subtitle" class="text-xs text-black/60 mb-2">
       from "{{ subtitle }}"
     </p>
 

@@ -8,6 +8,7 @@ import {
 import { usePrompt } from "../../../composables/usePrompt";
 import { useToast } from "../../../composables/useToast";
 import Modal from "../../../components/Modal.vue";
+import { Folder } from "@lucide/vue";
 
 const props = defineProps<{ programId: string }>();
 const emit = defineEmits<{
@@ -92,7 +93,7 @@ function handleSaveHere() {
         Root
       </button>
       <template v-for="(f, i) in pathTrail" :key="f.id">
-        <span class="text-black/30">/</span>
+        <span class="text-black/50">/</span>
         <button
           class="text-dole-blue hover:underline"
           :class="{ 'font-semibold': i === pathTrail.length - 1 }"
@@ -109,7 +110,7 @@ function handleSaveHere() {
       <p v-if="loading" class="text-sm text-black/50 p-4">Loading…</p>
       <p
         v-else-if="childFolders.length === 0"
-        class="text-sm text-black/40 italic p-4"
+        class="text-sm text-black/60 italic p-4"
       >
         No subfolders here.
       </p>
@@ -119,7 +120,7 @@ function handleSaveHere() {
         @click="openFolder(folder)"
         class="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm hover:bg-black/5 border-b border-black/5 last:border-0"
       >
-        <span>📁</span>
+        <Folder :size="16" class="text-black/60 shrink-0" />
         <span class="truncate">{{ folder.name }}</span>
       </button>
     </div>
