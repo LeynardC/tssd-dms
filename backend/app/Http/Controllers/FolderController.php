@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Folder;
 use Illuminate\Http\Request;
+use App\Models\ActivityLog;
 
 class FolderController extends Controller
 {
@@ -48,6 +49,16 @@ class FolderController extends Controller
             abort(403, 'You can only manage folders for your assigned program.');
         }
 
+        // Cross-program nesting guard: parent_id existing at all isn't enough —
+        // it must belong to the SAME program being submitted, or a staff member
+        // could nest their program's folder under a different program's tree.
+        if (!empty($validated['parent_id'])) {
+            $parent = Folder::find($validated['parent_id']);
+            if (!$parent || $parent->program_id !== $validated['program_id']) {
+                abort(422, 'The selected parent folder does not belong to this program.');
+            }
+        }
+
         $exists = Folder::where('program_id', $validated['program_id'])
             ->where('parent_id', $validated['parent_id'] ?? null)
             ->whereRaw('LOWER(name) = ?', [strtolower($validated['name'])])
@@ -65,6 +76,15 @@ class FolderController extends Controller
             'created_by' => $request->user()->id,
             'retired' => false,
         ]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'folder.created',
+            subjectType: 'Folder',
+            subjectId: $folder->id,
+            subjectLabel: $folder->name,
+            metadata: ['program_id' => $folder->program_id, 'parent_id' => $folder->parent_id],
+        );
 
         return response()->json(['folder' => $folder], 201);
     }
@@ -90,7 +110,17 @@ class FolderController extends Controller
             abort(422, 'A folder with that name already exists here.');
         }
 
+        $oldName = $folder->name;
         $folder->update(['name' => trim($validated['name'])]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'folder.renamed',
+            subjectType: 'Folder',
+            subjectId: $folder->id,
+            subjectLabel: $folder->name,
+            metadata: ['old_name' => $oldName, 'new_name' => $folder->name, 'program_id' => $folder->program_id],
+        );
 
         return response()->json(['folder' => $folder->fresh()]);
     }
@@ -102,6 +132,15 @@ class FolderController extends Controller
         }
 
         $folder->update(['retired' => true]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'folder.retired',
+            subjectType: 'Folder',
+            subjectId: $folder->id,
+            subjectLabel: $folder->name,
+            metadata: ['program_id' => $folder->program_id],
+        );
 
         return response()->json(['message' => 'Folder retired.']);
     }

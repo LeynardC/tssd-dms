@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -29,6 +30,15 @@ class StaffController extends Controller
         ]);
 
         $user->assignRole('staff');
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'staff.created',
+            subjectType: 'Staff',
+            subjectId: $user->id,
+            subjectLabel: $user->name,
+            metadata: ['username' => $user->username, 'staff_id' => $user->staff_id],
+        );
 
         return response()->json([
             'user' => $user,
@@ -58,7 +68,7 @@ class StaffController extends Controller
         return response()->json(['staff' => $staff]);
     }
 
-    public function toggleActive(User $user)
+    public function toggleActive(Request $request, User $user)
     {
         if ($user->hasRole('chief')) {
             abort(403, 'Cannot modify a chief account through this endpoint.');
@@ -66,10 +76,19 @@ class StaffController extends Controller
 
         $user->update(['is_active' => !$user->is_active]);
 
+        ActivityLog::record(
+            actor: $request->user(),
+            action: $user->is_active ? 'staff.activated' : 'staff.deactivated',
+            subjectType: 'Staff',
+            subjectId: $user->id,
+            subjectLabel: $user->name,
+            metadata: ['staff_id' => $user->staff_id],
+        );
+
         return response()->json(['user' => $user->fresh()]);
     }
 
-    public function resetPassword(User $user)
+    public function resetPassword(Request $request, User $user)
     {
         if ($user->hasRole('chief')) {
             abort(403, 'Cannot reset a chief account through this endpoint.');
@@ -80,6 +99,15 @@ class StaffController extends Controller
             'password' => $tempPassword,
             'must_change_password' => true,
         ])->save();
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'staff.password_reset',
+            subjectType: 'Staff',
+            subjectId: $user->id,
+            subjectLabel: $user->name,
+            metadata: ['staff_id' => $user->staff_id],
+        );
 
         return response()->json([
             'user' => $user->fresh(),
@@ -99,18 +127,46 @@ class StaffController extends Controller
             'assigned_program' => ['required', 'string', 'max:255'],
         ]);
 
+        $before = [
+            'position' => $user->position,
+            'unit' => $user->unit,
+            'assigned_program' => $user->assigned_program,
+        ];
+
         $user->update($validated);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'staff.updated',
+            subjectType: 'Staff',
+            subjectId: $user->id,
+            subjectLabel: $user->name,
+            metadata: ['old' => $before, 'new' => $validated],
+        );
 
         return response()->json(['user' => $user->fresh()]);
     }
 
-    public function destroy(User $user)
+    public function destroy(Request $request, User $user)
     {
         if ($user->hasRole('chief')) {
             abort(403, 'Cannot delete a chief account through this endpoint.');
         }
 
+        $userId = $user->id;
+        $userName = $user->name;
+        $staffId = $user->staff_id;
+
         $user->delete();
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'staff.deleted',
+            subjectType: 'Staff',
+            subjectId: $userId,
+            subjectLabel: $userName,
+            metadata: ['staff_id' => $staffId],
+        );
 
         return response()->json(['message' => 'Staff account deleted.']);
     }

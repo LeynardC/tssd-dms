@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\File;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -84,6 +85,13 @@ class FileController extends Controller
             abort(403, 'You can only upload files for your assigned program.');
         }
 
+        if (!empty($validated['folder_id'])) {
+            $folder = \App\Models\Folder::find($validated['folder_id']);
+            if (!$folder || $folder->program_id !== $validated['program_id']) {
+                abort(422, 'The selected folder does not belong to this program.');
+            }
+        }
+
         $uploaded = $request->file('file');
         $extension = strtolower($uploaded->getClientOriginalExtension());
 
@@ -125,6 +133,16 @@ class FileController extends Controller
             'description' => $validated['description'] ?? null,
             'parsed_data' => $parsedData,
         ]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'file.uploaded',
+            subjectType: 'File',
+            subjectId: $file->id,
+            subjectLabel: $file->original_name,
+            metadata: ['program_id' => $file->program_id, 'folder_id' => $file->folder_id],
+        );
+
         return response()->json(['file' => $file->load('uploader:id,name')], 201);
     }
 
@@ -154,7 +172,17 @@ class FileController extends Controller
             'name' => ['required', 'string', 'max:255'],
         ]);
 
+        $oldName = $file->original_name;
         $file->update(['original_name' => trim($validated['name'])]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'file.renamed',
+            subjectType: 'File',
+            subjectId: $file->id,
+            subjectLabel: $file->original_name,
+            metadata: ['old_name' => $oldName, 'new_name' => $file->original_name, 'program_id' => $file->program_id],
+        );
 
         return response()->json(['file' => $file->fresh()->load('uploader:id,name')]);
     }
@@ -172,7 +200,24 @@ class FileController extends Controller
             'folder_id' => ['nullable', 'integer', 'exists:folders,id'],
         ]);
 
+        if (!empty($validated['folder_id'])) {
+            $folder = \App\Models\Folder::find($validated['folder_id']);
+            if (!$folder || $folder->program_id !== $file->program_id) {
+                abort(422, 'The selected folder does not belong to this file\'s program.');
+            }
+        }
+
+        $oldFolderId = $file->folder_id;
         $file->update(['folder_id' => $validated['folder_id'] ?? null]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'file.moved',
+            subjectType: 'File',
+            subjectId: $file->id,
+            subjectLabel: $file->original_name,
+            metadata: ['old_folder_id' => $oldFolderId, 'new_folder_id' => $file->folder_id, 'program_id' => $file->program_id],
+        );
 
         return response()->json(['file' => $file->fresh()->load('uploader:id,name')]);
     }
@@ -184,6 +229,15 @@ class FileController extends Controller
         }
 
         $file->update(['locked' => !$file->locked]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: $file->locked ? 'file.locked' : 'file.unlocked',
+            subjectType: 'File',
+            subjectId: $file->id,
+            subjectLabel: $file->original_name,
+            metadata: ['program_id' => $file->program_id, 'locked' => $file->locked],
+        );
 
         return response()->json(['file' => $file->fresh()]);
     }
@@ -197,8 +251,22 @@ class FileController extends Controller
             abort(423, 'This file is locked and cannot be deleted.');
         }
 
+        $fileId = $file->id;
+        $fileName = $file->original_name;
+        $programId = $file->program_id;
+        $folderId = $file->folder_id;
+
         Storage::disk('local')->delete($file->stored_path);
         $file->delete();
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'file.deleted',
+            subjectType: 'File',
+            subjectId: $fileId,
+            subjectLabel: $fileName,
+            metadata: ['program_id' => $programId, 'folder_id' => $folderId],
+        );
 
         return response()->json(['message' => 'File deleted.']);
     }

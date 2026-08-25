@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Category;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -43,6 +44,15 @@ class CategoryController extends Controller
             'retired' => false,
         ]);
 
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'category.created',
+            subjectType: 'Category',
+            subjectId: $category->id,
+            subjectLabel: $category->name,
+            metadata: ['code' => $category->code, 'unit' => $category->unit],
+        );
+
         return response()->json(['category' => $category], 201);
     }
 
@@ -62,14 +72,33 @@ class CategoryController extends Controller
             abort(422, 'A category with that name already exists in this unit.');
         }
 
+        $oldName = $category->name;
         $category->update(['name' => trim($validated['name'])]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'category.renamed',
+            subjectType: 'Category',
+            subjectId: $category->id,
+            subjectLabel: $category->name,
+            metadata: ['old_name' => $oldName, 'new_name' => $category->name, 'unit' => $category->unit],
+        );
 
         return response()->json(['category' => $category->fresh()]);
     }
 
-    public function toggleStatus(Category $category)
+    public function toggleStatus(Request $request, Category $category)
     {
         $category->update(['retired' => !$category->retired]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: $category->retired ? 'category.retired' : 'category.restored',
+            subjectType: 'Category',
+            subjectId: $category->id,
+            subjectLabel: $category->name,
+            metadata: ['unit' => $category->unit],
+        );
 
         return response()->json(['category' => $category->fresh()]);
     }
