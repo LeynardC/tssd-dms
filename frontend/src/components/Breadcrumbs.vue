@@ -20,7 +20,7 @@ defineProps<{ crumbs: Crumb[] }>();
         {{ crumb.label }}
       </router-link>
       <span v-else class="text-white font-medium">{{ crumb.label }}</span>
-      <span v-if="i < crumbs.length - 1" class="text-white/40 px-1">›</span>
+      <span v-if="i < crumbs.length - 1" class="text-white/70 px-1">›</span>
     </template>
   </nav>
 </template>
