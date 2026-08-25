@@ -122,11 +122,7 @@ const routes = [
       {
         path: "settings",
         name: "settings",
-        component: () => import("../views/ComingSoon.vue"),
-        props: {
-          title: "Settings",
-          description: "Profile and account settings — coming soon.",
-        },
+        component: () => import("../views/SettingsPage.vue"),
       },
     ],
   },
@@ -155,6 +151,13 @@ router.beforeEach(async (to) => {
       ? true
       : { path: "/complete-profile" };
   }
+
+  // Chief accounts must have 2FA enabled before accessing anything else —
+  // Settings is the one place they're allowed to go to set it up.
+  if (user.role === "chief" && !user.two_factor_enabled) {
+    return to.name === "settings" ? true : { path: "/settings" };
+  }
+
   if (to.name === "change-password" || to.name === "complete-profile") {
     return { path: "/monitoring" };
   }
