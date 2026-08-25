@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import * as XLSX from "xlsx";
 import { hasParser, parseWorkbookForProgram } from "../parsers";
 import {
   ensureCategoriesLoaded,
   activeCategories,
+  categoriesLoading,
 } from "../../categories/data/categoryCache";
 import {
   getFolders,
@@ -26,7 +27,20 @@ import {
   type FileRecord,
   isPreviewable,
 } from "../data/fileStore";
+import {
+  queueUpload,
+  getQueuedUploads,
+  flushQueue,
+  isQueueGettingLarge,
+} from "../data/uploadQueue";
+import {
+  getActivityLog,
+  actionLabel,
+  actionDetail,
+  type ActivityLogEntry,
+} from "../data/activityLogStore";
 import PreviewModal from "../components/PreviewModal.vue";
+import { useFloatingMenu } from "../../../composables/useFloatingMenu";
 
 import { useConfirm } from "../../../composables/useConfirm";
 import { usePrompt } from "../../../composables/usePrompt";
@@ -39,8 +53,17 @@ import { useProgramFiles } from "../composables/useProgramFiles";
 
 const props = defineProps<{
   programId: string;
-  folderPath?: string[];
+  folderPath?: string[] | string;
 }>();
+
+// Vue Router's repeatable optional param (:folderPath*) sometimes resolves
+// an empty path segment back as "" instead of [] — normalize defensively
+// here rather than relying on every caller to always pass a real array.
+const normalizedFolderPath = computed<string[]>(() => {
+  if (Array.isArray(props.folderPath)) return props.folderPath;
+  if (!props.folderPath) return [];
+  return [props.folderPath];
+});
 const router = useRouter();
 const program = computed(() =>
   activeCategories.value.find((c) => c.code === props.programId),
@@ -50,12 +73,25 @@ const { promptAction } = usePrompt();
 const { showToast } = useToast();
 
 const canManage = computed(() => canManageFolders(props.programId));
-const layout = ref<"grid" | "list">("list");
 const { periods: existingPeriods } = useProgramFiles(props.programId);
+const LAYOUT_STORAGE_KEY = "tssd-file-explorer-layout";
+
+// --- Kebab menu state (shared floating-menu logic — see useFloatingMenu.ts) ---
+interface MenuTarget {
+  kind: "folder" | "file";
+  folder?: FolderRecord;
+  file?: FileRecord;
+}
+const {
+  openTarget: openMenu,
+  position: menuPosition,
+  openMenu: showMenu,
+  closeMenu,
+} = useFloatingMenu<MenuTarget>();
 
 // --- Navigation: current folder + breadcrumb trail, derived from the URL ---
 const folderIds = computed<number[]>(() =>
-  (props.folderPath ?? []).map((id) => Number(id)),
+  normalizedFolderPath.value.map((id) => Number(id)),
 );
 
 const currentFolderId = computed<number | null>(() => {
@@ -132,6 +168,31 @@ onMounted(ensureCategoriesLoaded);
 watch(() => props.folderPath, loadAll);
 watch(() => props.folderPath, closeMenu);
 
+function getStoredLayout(): "grid" | "list" {
+  const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+  return stored === "grid" || stored === "list" ? stored : "list";
+}
+
+const layout = ref<"grid" | "list">(getStoredLayout());
+
+watch(layout, (newLayout) => {
+  localStorage.setItem(LAYOUT_STORAGE_KEY, newLayout);
+});
+
+const nameFilter = ref("");
+
+const filteredChildFolders = computed(() => {
+  const q = nameFilter.value.trim().toLowerCase();
+  if (!q) return childFolders.value;
+  return childFolders.value.filter((f) => f.name.toLowerCase().includes(q));
+});
+
+const filteredFiles = computed(() => {
+  const q = nameFilter.value.trim().toLowerCase();
+  if (!q) return files.value;
+  return files.value.filter((f) => f.original_name.toLowerCase().includes(q));
+});
+
 function openFolder(folder: FolderRecord) {
   router.push({
     name: "file-explorer",
@@ -166,9 +227,42 @@ async function handleNewFolder() {
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
 const uploadProgress = ref(0);
+const queuedCount = ref(0);
 function triggerUpload() {
   fileInput.value?.click();
 }
+
+async function refreshQueuedCount() {
+  queuedCount.value = (await getQueuedUploads()).length;
+}
+
+async function tryFlushQueue() {
+  if (!navigator.onLine) return;
+  const before = (await getQueuedUploads()).length;
+  if (before === 0) return;
+  const { succeeded, failed } = await flushQueue();
+  await refreshQueuedCount();
+  if (succeeded > 0) {
+    showToast(
+      succeeded === 1
+        ? "1 queued file uploaded."
+        : `${succeeded} queued files uploaded.`,
+      "success",
+    );
+    await loadAll();
+  }
+  if (failed > 0) {
+    showToast(
+      `${failed} queued file(s) still couldn't upload — will retry later.`,
+      "error",
+    );
+  }
+}
+
+onMounted(refreshQueuedCount);
+onMounted(tryFlushQueue);
+onMounted(() => window.addEventListener("online", tryFlushQueue));
+onUnmounted(() => window.removeEventListener("online", tryFlushQueue));
 
 function isLikelyXlsx(buffer: ArrayBuffer): boolean {
   const bytes = new Uint8Array(buffer.slice(0, 2));
@@ -226,12 +320,7 @@ function findShadowedPeriods(parsedData: {
   }
   return conflicts;
 }
-async function handleFileSelected(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  if (!file) return;
-
+async function processUpload(file: File) {
   const parsedData = await tryParseXlsx(file);
 
   if (parsedData) {
@@ -251,6 +340,27 @@ async function handleFileSelected(e: Event) {
     }
   }
 
+  if (!navigator.onLine) {
+    await queueUpload({
+      programId: props.programId,
+      folderId: currentFolderId.value,
+      file,
+      parsedData,
+    });
+    await refreshQueuedCount();
+    showToast(
+      `"${file.name}" saved — no connection. Will upload automatically once you're back online.`,
+      "success",
+    );
+    if (isQueueGettingLarge(queuedCount.value)) {
+      showToast(
+        `${queuedCount.value} files are waiting to upload. Check your connection when you can.`,
+        "error",
+      );
+    }
+    return;
+  }
+
   uploading.value = true;
   uploadProgress.value = 0;
   try {
@@ -266,43 +376,74 @@ async function handleFileSelected(e: Event) {
     showToast(`"${file.name}" uploaded.`, "success");
     await loadAll();
   } catch (err) {
-    showToast(
-      err instanceof Error ? err.message : "Upload failed. Please try again.",
-      "error",
-    );
+    const isNetworkError =
+      err instanceof TypeError || (err as any)?.status === undefined;
+    if (isNetworkError) {
+      await queueUpload({
+        programId: props.programId,
+        folderId: currentFolderId.value,
+        file,
+        parsedData,
+      });
+      await refreshQueuedCount();
+      showToast(
+        `"${file.name}" saved — connection issue. Will retry automatically.`,
+        "success",
+      );
+    } else {
+      showToast(
+        err instanceof Error ? err.message : "Upload failed. Please try again.",
+        "error",
+      );
+    }
   } finally {
     uploading.value = false;
   }
 }
 
-// --- Kebab menu state ---
-interface MenuTarget {
-  kind: "folder" | "file";
-  folder?: FolderRecord;
-  file?: FileRecord;
+async function handleFileSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  await processUpload(file);
 }
-const openMenu = ref<MenuTarget | null>(null);
-const menuPosition = ref({ top: 0, left: 0 });
 
-function showMenu(target: MenuTarget, event: MouseEvent) {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  const MENU_WIDTH = 192;
-  let left = Math.max(
-    8,
-    Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
-  );
-  const top =
-    window.innerHeight - rect.bottom >= 260 ? rect.bottom + 4 : rect.top - 264;
-  menuPosition.value = { top: Math.max(8, top), left };
-  openMenu.value = target;
-  // Close on any click outside the menu, or on any navigation away from
-  // this folder. Registered fresh each time the menu opens; removed the
-  // moment it closes so it never lingers or stacks up duplicate listeners.
-  setTimeout(() => document.addEventListener("click", closeMenu), 0);
+// --- Drag and drop ---
+const isDraggingOver = ref(false);
+let dragCounter = 0;
+
+function handleDragEnter(e: DragEvent) {
+  if (!canManage.value) return;
+  e.preventDefault();
+  dragCounter++;
+  isDraggingOver.value = true;
 }
-function closeMenu() {
-  openMenu.value = null;
-  document.removeEventListener("click", closeMenu);
+
+function handleDragOver(e: DragEvent) {
+  if (!canManage.value) return;
+  e.preventDefault();
+}
+
+function handleDragLeave(e: DragEvent) {
+  if (!canManage.value) return;
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    isDraggingOver.value = false;
+  }
+}
+
+async function handleDrop(e: DragEvent) {
+  if (!canManage.value) return;
+  e.preventDefault();
+  dragCounter = 0;
+  isDraggingOver.value = false;
+
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  await processUpload(file);
 }
 
 // --- Folder actions ---
@@ -436,6 +577,10 @@ const moveDestinationOptions = computed(() => {
     .sort((a, b) => a.name.localeCompare(b.name));
 });
 
+function resolveFolderName(id: number): string | undefined {
+  return allFolders.value.find((f) => f.id === id)?.name;
+}
+
 function openMove() {
   moveTarget.value = openMenu.value;
   moveDestination.value = "";
@@ -469,6 +614,31 @@ async function confirmMove() {
 // --- Info modal ---
 const infoTarget = ref<MenuTarget | null>(null);
 const previewTarget = ref<FileRecord | null>(null);
+
+// --- Activity log (Info modal) ---
+const activityLog = ref<ActivityLogEntry[]>([]);
+const activityLoading = ref(false);
+const activityError = ref("");
+
+watch(infoTarget, async (target) => {
+  activityLog.value = [];
+  activityError.value = "";
+  if (!target) return;
+
+  const subjectType = target.kind === "folder" ? "Folder" : "File";
+  const subjectId = target.folder?.id ?? target.file?.id;
+  if (!subjectId) return;
+
+  activityLoading.value = true;
+  try {
+    activityLog.value = await getActivityLog(subjectType, subjectId);
+  } catch (err) {
+    activityError.value =
+      err instanceof Error ? err.message : "Could not load activity log.";
+  } finally {
+    activityLoading.value = false;
+  }
+});
 
 function openInfo() {
   infoTarget.value = openMenu.value;
@@ -517,7 +687,26 @@ function handleViewData() {
 </script>
 
 <template>
-  <div v-if="program" class="min-h-screen bg-paper">
+  <div
+    v-if="categoriesLoading"
+    class="min-h-screen bg-paper flex items-center justify-center"
+  >
+    <div class="flex flex-col items-center gap-3 text-black/60">
+      <div
+        class="w-8 h-8 border-2 border-black/10 border-t-dole-blue rounded-full animate-spin"
+      ></div>
+      <p class="text-sm">Loading program…</p>
+    </div>
+  </div>
+
+  <div
+    v-else-if="program"
+    class="min-h-screen bg-paper relative"
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
@@ -525,8 +714,40 @@ function handleViewData() {
       </h1>
     </header>
 
-    <main class="max-w-5xl mx-auto px-8 py-10">
-      <div class="flex items-center justify-end mb-4 gap-3">
+    <main class="max-w-5xl mx-auto px-8 py-10 relative">
+      <div
+        v-if="isDraggingOver"
+        class="fixed inset-0 bg-black/50 z-40 flex items-center justify-center pointer-events-none"
+      >
+        <div
+          class="bg-white rounded-2xl px-12 py-10 flex flex-col items-center gap-3 border-2 border-dashed border-dole-blue"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="w-12 h-12 text-dole-blue"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+            <polyline points="7 9 12 4 17 9" />
+            <line x1="12" y1="4" x2="12" y2="16" />
+          </svg>
+          <p class="text-dole-blue font-medium text-lg">
+            Drop file here to upload
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mb-4 gap-3">
+        <input
+          v-model="nameFilter"
+          type="text"
+          placeholder="Filter by name..."
+          class="border border-black/20 rounded px-3 py-1.5 text-sm w-48 focus:outline-none focus:border-dole-blue"
+        />
         <div class="flex items-center gap-2">
           <div class="flex border border-black/10 rounded overflow-hidden">
             <button
@@ -566,6 +787,17 @@ function handleViewData() {
             >
               {{ uploading ? `Uploading… ${uploadProgress}%` : "+ Upload" }}
             </button>
+            <span
+              v-if="queuedCount > 0"
+              class="text-xs px-2 py-1 rounded-full"
+              :class="
+                queuedCount >= 5
+                  ? 'bg-dole-red/10 text-dole-red'
+                  : 'bg-dole-gold/20 text-dole-blue-dark'
+              "
+            >
+              {{ queuedCount }} waiting to upload
+            </span>
             <input
               ref="fileInput"
               type="file"
@@ -577,22 +809,39 @@ function handleViewData() {
       </div>
 
       <div class="bg-white border border-black/10 rounded-lg p-4">
-        <p v-if="loading" class="text-sm text-black/50">Loading...</p>
+        <div v-if="loading" class="space-y-2 animate-pulse">
+          <div
+            v-for="i in 5"
+            :key="i"
+            class="flex items-center gap-3 px-3 py-2"
+          >
+            <div class="w-8 h-8 bg-black/10 rounded"></div>
+            <div class="flex-1 h-4 bg-black/10 rounded"></div>
+            <div class="w-24 h-4 bg-black/10 rounded hidden sm:block"></div>
+            <div class="w-20 h-4 bg-black/10 rounded hidden sm:block"></div>
+          </div>
+        </div>
         <p v-else-if="loadError" class="text-sm text-red-600">
           {{ loadError }}
         </p>
         <p
-          v-else-if="childFolders.length === 0 && files.length === 0"
+          v-else-if="
+            filteredChildFolders.length === 0 && filteredFiles.length === 0
+          "
           class="text-sm text-black/50"
         >
-          This folder is empty.
+          {{
+            nameFilter.trim()
+              ? `No files or folders match "${nameFilter}".`
+              : "This folder is empty."
+          }}
         </p>
 
         <template v-else>
           <!-- List header -->
           <div
             v-if="layout === 'list'"
-            class="hidden sm:grid grid-cols-[1fr_140px_180px_100px_40px] gap-3 px-3 pb-2 mb-1 border-b border-black/10 text-xs font-medium text-black/40 uppercase tracking-wide"
+            class="hidden sm:grid grid-cols-[1fr_140px_180px_100px_40px] gap-3 px-3 pb-2 mb-1 border-b border-black/10 text-xs font-medium text-black/60 uppercase tracking-wide"
           >
             <span>Name</span>
             <span>Owner</span>
@@ -609,7 +858,7 @@ function handleViewData() {
             "
           >
             <ExplorerItem
-              v-for="folder in childFolders"
+              v-for="folder in filteredChildFolders"
               :key="'folder-' + folder.id"
               :layout="layout"
               kind="folder"
@@ -619,7 +868,7 @@ function handleViewData() {
               @menu="showMenu({ kind: 'folder', folder }, $event)"
             />
             <ExplorerItem
-              v-for="file in files"
+              v-for="file in filteredFiles"
               :key="'file-' + file.id"
               :layout="layout"
               kind="file"
@@ -734,10 +983,35 @@ function handleViewData() {
         </div>
       </dl>
       <div
-        class="mt-4 pt-4 border-t border-black/10 text-xs text-black/40 space-y-1"
+        class="mt-4 pt-4 border-t border-black/10 text-xs text-black/60 space-y-1"
       >
         <p>Who Has Access — coming soon</p>
-        <p>Activity log — coming soon</p>
+        <div class="pt-2">
+          <p class="text-black/50 mb-1">Activity log</p>
+          <p v-if="activityLoading" class="text-black/60">Loading…</p>
+          <p v-else-if="activityError" class="text-red-600">
+            {{ activityError }}
+          </p>
+          <p v-else-if="activityLog.length === 0" class="text-black/60">
+            No activity recorded yet.
+          </p>
+          <ul v-else class="space-y-1 max-h-40 overflow-y-auto">
+            <li
+              v-for="entry in activityLog"
+              :key="entry.id"
+              class="text-black/70"
+            >
+              <span class="font-medium">{{ entry.actor_name }}</span>
+              {{ actionLabel(entry.action).toLowerCase() }}
+              <span v-if="actionDetail(entry, resolveFolderName)">
+                — {{ actionDetail(entry, resolveFolderName) }}</span
+              >
+              <span class="text-black/60">
+                - {{ formatDateTime(entry.created_at) }}</span
+              >
+            </li>
+          </ul>
+        </div>
         <p v-if="infoTarget.file">Version history — coming soon</p>
       </div>
     </Modal>
@@ -747,5 +1021,24 @@ function handleViewData() {
       @close="previewTarget = null"
     />
   </div>
-  <div v-else class="p-8 text-black/60">Program not found.</div>
+  <div v-else class="min-h-screen bg-paper flex items-center justify-center">
+    <div class="flex flex-col items-center gap-3 text-center max-w-sm">
+      <div
+        class="w-12 h-12 rounded-full bg-black/5 flex items-center justify-center text-black/50 text-xl"
+      >
+        ?
+      </div>
+      <p class="font-medium text-black/70">Program not found</p>
+      <p class="text-sm text-black/50">
+        This program doesn't exist or may have been removed. Check the link, or
+        go back to Documents.
+      </p>
+      <router-link
+        :to="{ name: 'documents' }"
+        class="mt-2 text-sm text-dole-blue underline hover:no-underline"
+      >
+        Back to Documents
+      </router-link>
+    </div>
+  </div>
 </template>
