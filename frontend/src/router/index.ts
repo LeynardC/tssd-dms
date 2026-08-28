@@ -6,6 +6,7 @@ import {
   setCurrentUser,
 } from "../features/auth/authStore";
 import { getCurrentUser } from "../features/auth/authService";
+import { useToast } from "../composables/useToast";
 
 //#region ROUTES
 const routes = [
@@ -142,6 +143,19 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+});
+
+// A request failed with 401 mid-session (see authService). Tell the user why
+// and get them to the login screen, instead of leaving them on a page whose
+// data silently won't load.
+window.addEventListener("auth:session-expired", () => {
+  if (router.currentRoute.value.name !== "login") {
+    useToast().showToast(
+      "Your session has expired. Please sign in again.",
+      "info",
+    );
+    router.replace({ path: "/login" });
+  }
 });
 
 router.beforeEach(async (to) => {

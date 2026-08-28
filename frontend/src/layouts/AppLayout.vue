@@ -117,7 +117,9 @@ watch(
 function handleSearchInput() {
   if (searchDebounce) clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => {
-    if (searchQuery.value.trim()) {
+    // Two-character minimum: a single letter matches almost everything and
+    // just spends a database scan (and the API now rejects it anyway).
+    if (searchQuery.value.trim().length >= 2) {
       runSearch(searchQuery.value);
       searchOpen.value = true;
     } else {
@@ -276,7 +278,7 @@ async function handleLogout() {
           <input
             v-model="searchQuery"
             @input="handleSearchInput"
-            @focus="searchQuery.trim() && (searchOpen = true)"
+            @focus="searchQuery.trim().length >= 2 && (searchOpen = true)"
             type="text"
             placeholder="Search files, folders, staff, or monitoring data..."
             class="w-full border border-white/20 rounded px-3 py-1.5 pr-8 text-sm bg-white/95 focus:outline-none focus:border-dole-gold"
