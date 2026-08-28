@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import { login, getCurrentUser, ApiError } from "../authService";
 import { setCurrentUser } from "../authStore";
 import { twoFactorChallenge } from "../data/twoFactorService";
 import { loginWithPasskey } from "../data/passkeyService";
+import { startGoogleLogin } from "../data/oauthLinkService";
 import doleLogo from "../../../assets/dole-logo.png";
 
 const router = useRouter();
+const route = useRoute();
 const username = ref("");
 const password = ref("");
 const error = ref("");
@@ -20,6 +22,19 @@ const useRecoveryCode = ref(false);
 const recoveryCodeInput = ref("");
 const twoFactorError = ref("");
 const passkeyLoading = ref(false);
+
+// Landed back here from /auth/google/callback with an error to show —
+// e.g. "still awaiting Chief approval."
+onMounted(() => {
+  if (typeof route.query.oauth_error === "string") {
+    error.value = route.query.oauth_error;
+    router.replace({ query: { ...route.query, oauth_error: undefined } });
+  }
+});
+
+function handleGoogleLogin() {
+  startGoogleLogin();
+}
 
 async function handlePasskeyLogin() {
   error.value = "";
@@ -226,6 +241,14 @@ async function handleTwoFactorSubmit() {
           class="w-full border border-dole-blue text-dole-blue rounded py-2 font-medium hover:bg-dole-blue/5 transition disabled:opacity-50"
         >
           {{ passkeyLoading ? "Verifying…" : "Sign in with a passkey" }}
+        </button>
+
+        <button
+          type="button"
+          @click="handleGoogleLogin"
+          class="w-full border border-black/20 text-black/70 rounded py-2 font-medium hover:bg-black/5 transition mt-3"
+        >
+          Sign in with Google
         </button>
       </form>
 

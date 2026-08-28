@@ -4,11 +4,11 @@ import { useRouter } from "vue-router";
 import { completeProfile, ApiError } from "../authService";
 import { setCurrentUser } from "../authStore";
 import {
-  ensureCategoriesLoaded,
-  UNITS,
+  ensureProgramsLoaded,
   programsByUnit,
-  categoriesLoading,
-} from "../../categories/data/categoryCache";
+  programsLoading,
+} from "../../programs/data/programCache";
+import { ensureUnitsLoaded, activeUnits } from "../../units/data/unitCache";
 
 const router = useRouter();
 const position = ref("");
@@ -20,7 +20,8 @@ const loading = ref(false);
 const availablePrograms = computed(
   () => programsByUnit.value[unit.value] ?? [],
 );
-onMounted(ensureCategoriesLoaded);
+onMounted(ensureProgramsLoaded);
+onMounted(ensureUnitsLoaded);
 // Reset the program choice whenever unit changes, so a stale selection from
 // a different unit can't silently get submitted alongside a new unit.
 function handleUnitChange() {
@@ -98,8 +99,8 @@ async function handleSubmit() {
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
           >
             <option value="" disabled>Select a unit</option>
-            <option v-for="u in UNITS" :key="u.value" :value="u.value">
-              {{ u.label }}
+            <option v-for="u in activeUnits" :key="u.code" :value="u.code">
+              {{ u.name }}
             </option>
           </select>
         </div>
@@ -113,12 +114,12 @@ async function handleSubmit() {
             id="complete-profile-program"
             v-model="assignedProgram"
             required
-            :disabled="!unit || categoriesLoading"
+            :disabled="!unit || programsLoading"
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue disabled:bg-black/5"
           >
             <option value="" disabled>
               {{
-                categoriesLoading
+                programsLoading
                   ? "Loading programs..."
                   : unit
                     ? "Select a program"
