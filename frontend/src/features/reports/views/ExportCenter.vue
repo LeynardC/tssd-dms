@@ -12,6 +12,7 @@ import type { ReportInput } from "../reportShared";
 import { currentUser } from "../../auth/authStore";
 import Modal from "../../../components/Modal.vue";
 import { useToast } from "../../../composables/useToast";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 
 const { showToast } = useToast();
 
@@ -23,7 +24,7 @@ const exportablePrograms = computed(() =>
 const selectedProgramId = ref(exportablePrograms.value[0]?.id ?? "");
 
 // Real, API-backed monitoring data — the same source the dashboards use.
-const { periods, loading, error } = useProgramFiles(selectedProgramId);
+const { periods, loading, error, refresh } = useProgramFiles(selectedProgramId);
 
 function periodId(p: { year: number; quarter?: string }): string {
   return p.quarter ? `${p.year}-${p.quarter}` : `${p.year}`;
@@ -231,6 +232,17 @@ function onReportKeydown(e: KeyboardEvent) {
 }
 onMounted(() => document.addEventListener("keydown", onReportKeydown));
 onUnmounted(() => document.removeEventListener("keydown", onReportKeydown));
+
+// Re-pull the selected program's monitoring data when the user tabs back —
+// but not while a preview is open or an export is being built, so the
+// figures on screen can't shift mid-review or mid-build.
+useVisibilityRefresh(() => refresh({ background: true }), {
+  canRun: () =>
+    !showPreview.value &&
+    !showReportPreview.value &&
+    !xlsBuilding.value &&
+    !pdfBuilding.value,
+});
 
 </script>
 

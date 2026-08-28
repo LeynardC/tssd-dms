@@ -30,6 +30,7 @@ import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import Modal from "../../../components/Modal.vue";
 import { useFloatingMenu } from "../../../composables/useFloatingMenu";
+import { copyText } from "../../../utils/clipboard";
 
 const { confirmAction } = useConfirm();
 const { showToast } = useToast();
@@ -45,6 +46,7 @@ const creating = ref(false);
 const createdUser = ref<{ username: string; staff_id: string } | null>(null);
 const tempPassword = ref("");
 const copied = ref(false);
+const createAck = ref(false);
 
 async function handleCreate() {
   createError.value = "";
@@ -84,14 +86,20 @@ function openCreateModal() {
 }
 
 async function copyPassword() {
-  await navigator.clipboard.writeText(tempPassword.value);
-  copied.value = true;
+  copied.value = await copyText(tempPassword.value);
+  if (!copied.value) {
+    showToast(
+      "Couldn't copy automatically — select the password text and copy it manually.",
+      "error",
+    );
+  }
 }
 
 function dismissReveal() {
   createdUser.value = null;
   tempPassword.value = "";
   copied.value = false;
+  createAck.value = false;
 }
 
 // --- Staff table ---
@@ -277,6 +285,7 @@ async function handleToggleActive(member: StaffMember) {
 const resetTarget = ref<StaffMember | null>(null);
 const resetTempPassword = ref("");
 const resetCopied = ref(false);
+const resetAck = ref(false);
 
 async function handleResetPassword(member: StaffMember) {
   const ok = await confirmAction({
@@ -301,14 +310,20 @@ async function handleResetPassword(member: StaffMember) {
 }
 
 async function copyResetPassword() {
-  await navigator.clipboard.writeText(resetTempPassword.value);
-  resetCopied.value = true;
+  resetCopied.value = await copyText(resetTempPassword.value);
+  if (!resetCopied.value) {
+    showToast(
+      "Couldn't copy automatically — select the password text and copy it manually.",
+      "error",
+    );
+  }
 }
 
 function dismissReset() {
   resetTarget.value = null;
   resetTempPassword.value = "";
   resetCopied.value = false;
+  resetAck.value = false;
 }
 
 // --- Row actions: edit position/unit/program ---
@@ -411,6 +426,7 @@ async function handleDelete(member: StaffMember) {
       <Modal
         v-if="showCreateModal"
         title="Create Staff Account"
+        :close-on-backdrop="false"
         @close="showCreateModal = false"
       >
         <form @submit.prevent="handleCreate" class="space-y-4">
@@ -684,84 +700,102 @@ async function handleDelete(member: StaffMember) {
     </Teleport>
 
     <!-- Create: one-time temp password reveal -->
-    <div
+    <Modal
       v-if="createdUser"
-      class="fixed inset-0 bg-black/40 flex items-center justify-center px-8 z-50"
+      title="Account Created"
+      :close-on-backdrop="false"
+      @close="dismissReveal"
     >
-      <div class="bg-white rounded-lg p-6 max-w-md w-full">
-        <h3 class="font-display text-lg font-semibold text-dole-blue mb-2">
-          Account Created
-        </h3>
-        <p class="text-sm text-black/70 mb-4">
-          Give these credentials to
-          <strong>{{ createdUser.username }}</strong> ({{
-            createdUser.staff_id
-          }}). This password will not be shown again — copy it now.
-        </p>
-        <div
-          class="bg-black/5 rounded p-3 font-mono text-sm flex items-center justify-between gap-2 mb-2"
-        >
-          <span>{{ tempPassword }}</span>
-          <button
-            @click="copyPassword"
-            class="text-xs text-dole-blue underline shrink-0"
-          >
-            {{ copied ? "Copied!" : "Copy" }}
-          </button>
-        </div>
-        <p class="text-xs text-black/50 mb-4">
-          They'll be required to set a new password and complete their profile
-          on first login.
-        </p>
+      <p class="text-sm text-black/70 mb-4">
+        Give these credentials to
+        <strong>{{ createdUser.username }}</strong> ({{ createdUser.staff_id }}).
+        This password will not be shown again — copy or write it down now.
+      </p>
+      <div
+        class="bg-black/5 rounded p-3 font-mono text-sm flex items-center justify-between gap-2 mb-3"
+      >
+        <span class="break-all">{{ tempPassword }}</span>
         <button
+          type="button"
+          @click="copyPassword"
+          class="text-xs text-dole-blue underline shrink-0"
+        >
+          {{ copied ? "Copied!" : "Copy" }}
+        </button>
+      </div>
+      <label class="flex items-start gap-2 text-xs text-black/70">
+        <input type="checkbox" v-model="createAck" class="mt-0.5 shrink-0" />
+        <span>
+          I've saved this password securely. I understand it can't be shown
+          again.
+        </span>
+      </label>
+      <p class="text-xs text-black/50 mt-3">
+        They'll be required to set a new password and complete their profile on
+        first login.
+      </p>
+      <template #footer>
+        <button
+          type="button"
           @click="dismissReveal"
-          class="w-full bg-dole-blue text-white rounded py-2 text-sm font-medium"
+          :disabled="!createAck"
+          class="bg-dole-blue text-white rounded px-5 py-2 text-sm font-medium disabled:opacity-50"
         >
           Done
         </button>
-      </div>
-    </div>
+      </template>
+    </Modal>
 
     <!-- Reset password: one-time reveal -->
-    <div
+    <Modal
       v-if="resetTarget"
-      class="fixed inset-0 bg-black/40 flex items-center justify-center px-8 z-50"
+      title="Password Reset"
+      :close-on-backdrop="false"
+      @close="dismissReset"
     >
-      <div class="bg-white rounded-lg p-6 max-w-md w-full">
-        <h3 class="font-display text-lg font-semibold text-dole-blue mb-2">
-          Password Reset
-        </h3>
-        <p class="text-sm text-black/70 mb-4">
-          New temporary password for <strong>{{ resetTarget.name }}</strong
-          >. This will not be shown again — copy it now.
-        </p>
-        <div
-          class="bg-black/5 rounded p-3 font-mono text-sm flex items-center justify-between gap-2 mb-2"
-        >
-          <span>{{ resetTempPassword }}</span>
-          <button
-            @click="copyResetPassword"
-            class="text-xs text-dole-blue underline shrink-0"
-          >
-            {{ resetCopied ? "Copied!" : "Copy" }}
-          </button>
-        </div>
-        <p class="text-xs text-black/50 mb-4">
-          They'll be required to set a new password on next login.
-        </p>
+      <p class="text-sm text-black/70 mb-4">
+        New temporary password for <strong>{{ resetTarget.name }}</strong
+        >. This will not be shown again — copy or write it down now.
+      </p>
+      <div
+        class="bg-black/5 rounded p-3 font-mono text-sm flex items-center justify-between gap-2 mb-3"
+      >
+        <span class="break-all">{{ resetTempPassword }}</span>
         <button
+          type="button"
+          @click="copyResetPassword"
+          class="text-xs text-dole-blue underline shrink-0"
+        >
+          {{ resetCopied ? "Copied!" : "Copy" }}
+        </button>
+      </div>
+      <label class="flex items-start gap-2 text-xs text-black/70">
+        <input type="checkbox" v-model="resetAck" class="mt-0.5 shrink-0" />
+        <span>
+          I've saved this password securely. I understand it can't be shown
+          again.
+        </span>
+      </label>
+      <p class="text-xs text-black/50 mt-3">
+        They'll be required to set a new password on next login.
+      </p>
+      <template #footer>
+        <button
+          type="button"
           @click="dismissReset"
-          class="w-full bg-dole-blue text-white rounded py-2 text-sm font-medium"
+          :disabled="!resetAck"
+          class="bg-dole-blue text-white rounded px-5 py-2 text-sm font-medium disabled:opacity-50"
         >
           Done
         </button>
-      </div>
-    </div>
+      </template>
+    </Modal>
 
     <!-- Edit modal -->
     <Modal
       v-if="editTarget"
       title="Edit Staff Details"
+      :close-on-backdrop="false"
       @close="editTarget = null"
     >
       <form @submit.prevent="saveEdit" class="space-y-4">
