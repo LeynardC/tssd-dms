@@ -2,14 +2,14 @@
 
 namespace Database\Seeders;
 
-use App\Models\Category;
+use App\Models\Program;
 use Illuminate\Database\Seeder;
 
-class CategorySeeder extends Seeder
+class ProgramSeeder extends Seeder
 {
     public function run(): void
     {
-        $categories = [
+        $programs = [
             ['code' => 'aep', 'name' => 'AEP', 'unit' => 'unit_001'],
             ['code' => 'amp', 'name' => 'AMP', 'unit' => 'unit_001'],
             ['code' => 'do174', 'name' => 'DO 174', 'unit' => 'unit_001'],
@@ -22,10 +22,10 @@ class CategorySeeder extends Seeder
             ['code' => 'tupad', 'name' => 'TUPAD', 'unit' => 'unit_003'],
         ];
 
-        foreach ($categories as $category) {
-            Category::firstOrCreate(
-                ['code' => $category['code']],
-                $category,
+        foreach ($programs as $program) {
+            Program::firstOrCreate(
+                ['code' => $program['code']],
+                $program,
             );
         }
     }

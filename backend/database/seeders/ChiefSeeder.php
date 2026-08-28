@@ -16,7 +16,8 @@ class ChiefSeeder extends Seeder
                 'staff_id' => 'CHIEF-001',
                 'password' => 'ChangeMeNow123', // hashed automatically via the 'hashed' cast
                 'must_change_password' => true,
-                'profile_completed' => true, // Chief has no position/unit/program to declare
+                'profile_completed' => true, // Chief has no unit/program to declare — oversees all of them
+                'position' => 'TSSD Chief',
             ],
         );
 
