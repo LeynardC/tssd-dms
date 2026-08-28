@@ -18,7 +18,7 @@ class StaffController extends Controller
             'staff_id' => ['required', 'string', 'max:255', Rule::unique(User::class)],
         ]);
 
-        $tempPassword = Str::password(10);
+        $tempPassword = Str::password(16);
 
         $user = User::create([
             'name' => $validated['name'],
@@ -94,7 +94,7 @@ class StaffController extends Controller
             abort(403, 'Cannot reset a chief account through this endpoint.');
         }
 
-        $tempPassword = Str::password(10);
+        $tempPassword = Str::password(16);
         $user->forceFill([
             'password' => $tempPassword,
             'must_change_password' => true,

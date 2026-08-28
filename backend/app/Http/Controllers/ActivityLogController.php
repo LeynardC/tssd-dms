@@ -12,7 +12,7 @@ class ActivityLogController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate([
-            'subject_type' => ['required', 'string', 'in:File,Folder,Staff,Program,Unit'],
+            'subject_type' => ['required', 'string', 'in:File,Folder,Staff,Program,Unit,Auth'],
             'subject_id' => ['required', 'integer'],
         ]);
 
@@ -21,7 +21,9 @@ class ActivityLogController extends Controller
         $subjectId = $validated['subject_id'];
 
         if (!$user->hasRole('chief')) {
-            if ($subjectType === 'Staff' || $subjectType === 'Program' || $subjectType === 'Unit') {
+            // Auth = a staff member's sign-in history; Staff/Program/Unit =
+            // admin records. All Chief-only.
+            if (in_array($subjectType, ['Staff', 'Program', 'Unit', 'Auth'], true)) {
                 abort(403, 'You are not authorized to view this activity log.');
             }
 

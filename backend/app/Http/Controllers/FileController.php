@@ -102,7 +102,7 @@ class FileController extends Controller
             'folder_id' => ['nullable', 'integer', 'exists:folders,id'],
             'file' => ['required', 'file', 'max:' . (self::MAX_SIZE_BYTES / 1024)],
             'description' => ['nullable', 'string', 'max:25000'],
-            'parsed_data' => ['nullable', 'string'],
+            'parsed_data' => ['nullable', 'string', 'max:2000000'],
         ]);
 
         if (!$this->canManageProgram($request, $validated['program_id'])) {
@@ -185,7 +185,7 @@ class FileController extends Controller
 
         $validated = $request->validate([
             'file' => ['required', 'file', 'max:' . (self::MAX_SIZE_BYTES / 1024)],
-            'parsed_data' => ['nullable', 'string'],
+            'parsed_data' => ['nullable', 'string', 'max:2000000'],
         ]);
 
         $uploaded = $request->file('file');
@@ -260,7 +260,11 @@ class FileController extends Controller
             abort(404, 'File not found on disk.');
         }
 
-        return Storage::disk('local')->download($file->stored_path, $file->original_name);
+        // nosniff so the browser can't reinterpret the bytes as something
+        // more dangerous than the stored (signature-verified) mime type.
+        return Storage::disk('local')->download($file->stored_path, $file->original_name, [
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     public function rename(Request $request, File $file)
@@ -438,6 +442,13 @@ class FileController extends Controller
             abort(404, 'File not found on disk.');
         }
 
-        return Storage::disk('local')->response($file->stored_path, $file->original_name);
+        // Shown inline (image/PDF only, checked above). nosniff stops the
+        // browser reinterpreting the bytes as a more dangerous type than the
+        // signature-verified mime we stored. Kept minimal on purpose — a
+        // stricter CSP (sandbox / frame-ancestors) risks breaking the
+        // built-in PDF viewer the preview modal embeds.
+        return Storage::disk('local')->response($file->stored_path, $file->original_name, [
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 }

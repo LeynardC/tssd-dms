@@ -12,7 +12,7 @@ class SearchController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate([
-            'q' => ['required', 'string', 'min:1', 'max:255'],
+            'q' => ['required', 'string', 'min:2', 'max:255'],
         ]);
 
         $query = trim($validated['q']);
@@ -22,15 +22,22 @@ class SearchController extends Controller
         // LOWER(...) LIKE ? works the same on SQLite, MySQL, and PostgreSQL —
         // ILIKE is PostgreSQL-only and errors out on the other two, which
         // includes this project's own default local database (SQLite).
-        $needle = '%' . strtolower($query) . '%';
+        //
+        // addcslashes() escapes the LIKE metacharacters % and _ (and the
+        // escape char itself) so a search for "50%" or "a_b" matches those
+        // literals instead of turning the whole query into a wildcard. The
+        // explicit ESCAPE '\' clause is required because SQLite's LIKE has
+        // no default escape character; MySQL and PostgreSQL accept it too.
+        $needle = '%' . addcslashes(strtolower($query), '%_\\') . '%';
+        $like = "LIKE ? ESCAPE '\\'";
 
         $fileQuery = File::query()
-            ->whereRaw('LOWER(original_name) LIKE ?', [$needle])
+            ->whereRaw("LOWER(original_name) $like", [$needle])
             ->whereDoesntHave('folder', fn ($q) => $q->where('retired', true))
             ->with('uploader:id,name');
 
         $folderQuery = Folder::query()
-            ->whereRaw('LOWER(name) LIKE ?', [$needle])
+            ->whereRaw("LOWER(name) $like", [$needle])
             ->where('retired', false);
 
         if (!$isChief) {
@@ -45,10 +52,10 @@ class SearchController extends Controller
         $staffResults = [];
         if ($isChief) {
             $staffResults = User::role('staff')
-                ->where(function ($q) use ($needle) {
-                    $q->whereRaw('LOWER(name) LIKE ?', [$needle])
-                        ->orWhereRaw('LOWER(username) LIKE ?', [$needle])
-                        ->orWhereRaw('LOWER(staff_id) LIKE ?', [$needle]);
+                ->where(function ($q) use ($needle, $like) {
+                    $q->whereRaw("LOWER(name) $like", [$needle])
+                        ->orWhereRaw("LOWER(username) $like", [$needle])
+                        ->orWhereRaw("LOWER(staff_id) $like", [$needle]);
                 })
                 ->select(['id', 'name', 'username', 'staff_id', 'unit', 'assigned_program'])
                 ->limit(25)

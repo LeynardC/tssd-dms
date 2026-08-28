@@ -21,6 +21,15 @@ class SocialiteAuthController extends Controller
         return rtrim(env('FRONTEND_URL', 'http://localhost:5173'), '/');
     }
 
+    // Redirect back to the SPA with a short, stable error *code* rather than a
+    // full sentence. The SPA maps it to display text (oauthLinkService.ts).
+    // Keeps human-readable copy out of browser history and web-server logs,
+    // and keeps the wording in one place on the frontend.
+    private function bounce(string $path, string $code): RedirectResponse
+    {
+        return redirect($this->frontendUrl() . $path . '?oauth_error=' . urlencode($code));
+    }
+
     public function redirect(string $provider): RedirectResponse
     {
         abort_unless(in_array($provider, self::ALLOWED_PROVIDERS, true), 404);
@@ -44,10 +53,7 @@ class SocialiteAuthController extends Controller
         try {
             $socialiteUser = Socialite::driver($provider)->user();
         } catch (\Throwable) {
-            $target = $intent === 'link' ? '/settings' : '/login';
-            return redirect($this->frontendUrl() . $target . '?oauth_error=' . urlencode(
-                'Could not complete sign-in with Google. Please try again.',
-            ));
+            return $this->bounce($intent === 'link' ? '/settings' : '/login', 'google_failed');
         }
 
         return $intent === 'link'
@@ -61,9 +67,7 @@ class SocialiteAuthController extends Controller
     private function handleLink(Request $request, string $provider, SocialiteUser $socialiteUser): RedirectResponse
     {
         if (!Auth::check()) {
-            return redirect($this->frontendUrl() . '/login?oauth_error=' . urlencode(
-                'Your session expired. Please log in and try linking again.',
-            ));
+            return $this->bounce('/login', 'link_session_expired');
         }
 
         $user = Auth::user();
@@ -74,10 +78,10 @@ class SocialiteAuthController extends Controller
             ->first();
 
         if ($existing) {
-            $message = $existing->user_id === $user->id
-                ? "You've already requested to link this Google account."
-                : 'This Google account is already linked to another staff account.';
-            return redirect($this->frontendUrl() . '/settings?oauth_error=' . urlencode($message));
+            return $this->bounce(
+                '/settings',
+                $existing->user_id === $user->id ? 'link_already_requested' : 'link_taken',
+            );
         }
 
         // One active (pending or approved) link per provider per user — the
@@ -89,9 +93,7 @@ class SocialiteAuthController extends Controller
             ->exists();
 
         if ($alreadyHasOne) {
-            return redirect($this->frontendUrl() . '/settings?oauth_error=' . urlencode(
-                'You already have a linked or pending Google account. Unlink it first before linking a different one.',
-            ));
+            return $this->bounce('/settings', 'link_has_one');
         }
 
         $link = OAuthAccountLink::create([
@@ -126,24 +128,29 @@ class SocialiteAuthController extends Controller
             ->first();
 
         if (!$link) {
-            return redirect($this->frontendUrl() . '/login?oauth_error=' . urlencode(
-                "This Google account isn't linked to a DOLE staff account yet, or is still awaiting Chief approval.",
-            ));
+            return $this->bounce('/login', 'login_not_linked');
         }
 
         $user = $link->user;
 
         if (!$user || !$user->is_active) {
-            return redirect($this->frontendUrl() . '/login?oauth_error=' . urlencode(
-                'This account has been deactivated. Contact your Chief for assistance.',
-            ));
+            return $this->bounce('/login', 'login_deactivated');
+        }
+
+        // Google sign-in does not run the TOTP challenge. For an account that
+        // has two-step verification enabled — every Chief account, plus any
+        // staff who opted in — letting Google in would silently drop the
+        // second factor and reduce the account's security to whatever its
+        // Google account has. Those accounts must use the password + TOTP
+        // path, where the challenge is actually enforced. (Passkey login is
+        // exempt from this: a passkey is itself a strong second factor.)
+        if ($user->two_factor_confirmed_at !== null) {
+            return $this->bounce('/login', 'login_2fa_enabled');
         }
 
         // Same session-based login Fortify itself establishes for
         // password sign-in — Sanctum's stateful-request handling picks it
         // up for subsequent API calls the same way either path works.
-        // Google sign-in intentionally skips the TOTP challenge step here,
-        // matching this app's existing passkey-login precedent.
         Auth::login($user);
         $request->session()->regenerate();
 
