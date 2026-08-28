@@ -3,9 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SocialiteAuthController;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+// This backend is an API for the separate Vue SPA — nothing to render here.
+Route::get('/', fn () => response()->json(['service' => 'TSSD DMS API']));
 
 // Real browser redirects, not JSON — Google needs to land the user back
 // here directly, so these live outside routes/api.php. Session-based, same

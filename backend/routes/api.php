@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\StaffController;
 use App\Http\Controllers\FolderController;
 use Illuminate\Http\Request;
@@ -41,8 +42,17 @@ Route::middleware(['auth:sanctum'])->group(function () {
             $updater->update($user, $request->all());
         }
 
+        // Changing the password rotates the hash that AuthenticateSession
+        // (active for the stateful SPA) checks on every request — without
+        // this, THIS session would be invalidated on its very next call and
+        // the user bounced to /login mid-onboarding. logoutOtherDevices()
+        // re-syncs the current session's stored hash and revokes every other
+        // one, so the caller stays signed in and no client-side
+        // logout/re-login dance is needed.
+        Auth::guard('web')->logoutOtherDevices($request->input('password'));
+
         return response()->json(['message' => 'Password updated.']);
-    });
+    })->middleware('throttle:10,1');
 
     Route::put('/profile/complete', function (Request $request) {
         $validated = $request->validate([
@@ -74,7 +84,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/units', [UnitController::class, 'index']);
 
     Route::get('/files', [FileController::class, 'index']);
-    Route::post('/files', [FileController::class, 'store']);
+    // Tighter than the /api group's 120/min — an upload writes a 25MB file to
+    // disk, so it's the one endpoint worth its own ceiling. 30/min still
+    // clears any realistic bulk-upload session.
+    Route::post('/files', [FileController::class, 'store'])->middleware('throttle:30,1');
     Route::get('/user/passkeys', function (Request $request) {
         return response()->json([
             'passkeys' => $request->user()->passkeys()
@@ -89,7 +102,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/files/{file}/preview', [FileController::class, 'preview']);
     Route::patch('/files/{file}/rename', [FileController::class, 'rename']);
     Route::patch('/files/{file}/move', [FileController::class, 'move']);
-    Route::post('/files/{file}/replace', [FileController::class, 'replace']);
+    Route::post('/files/{file}/replace', [FileController::class, 'replace'])->middleware('throttle:30,1');
     Route::patch('/files/{file}/toggle-lock', [FileController::class, 'toggleLock']);
     Route::delete('/files/{file}', [FileController::class, 'destroy']);
     Route::patch('/files/{file}/restore', [FileController::class, 'restore'])->withTrashed();
