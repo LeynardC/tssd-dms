@@ -52,6 +52,22 @@ function findHeaderRow(rows: any[][], ...mustIncludeAll: string[]): number {
   );
 }
 
+function lc(v: any): string {
+  return typeof v === "string" ? v.trim().toLowerCase() : "";
+}
+
+// Resolve a column by matching its header text instead of hard-coding a
+// numeric index. A future logsheet that inserts or removes a column then
+// shifts nothing downstream — the lookup follows the label. All needles
+// must appear in the same header cell; returns -1 when nothing matches
+// (callers treat that as "this sheet's layout changed" and bail out).
+function colByHeader(header: any[], ...needles: string[]): number {
+  return header.findIndex((h) => {
+    const v = lc(h);
+    return v !== "" && needles.every((n) => v.includes(n));
+  });
+}
+
 function excelValueToDate(value: any): Date | null {
   if (value instanceof Date) return value;
   if (typeof value === "number")
@@ -102,6 +118,53 @@ function getDailyRatesByProvince(wb: XLSX.WorkBook): Map<string, number> {
     const province = normalizeProvince(provinceRaw);
     if (VALID_PROVINCES.has(province) && typeof rate === "number") {
       result.set(province, rate);
+    }
+  }
+  return result;
+}
+
+export interface LguRateEntry {
+  lgu: string;
+  rate: number;
+}
+
+function getLguHiringRates(wb: XLSX.WorkBook): Map<string, LguRateEntry[]> {
+  const result = new Map<string, LguRateEntry[]>();
+  const ws = findSheet(wb, (n) => n.toLowerCase().includes("hiring rate"));
+  if (!ws) return result;
+  const rows = sheetToRows(ws);
+  const headerIdx = findHeaderRow(rows, "daily rate", "lgu");
+  if (headerIdx === -1) return result;
+
+  let currentProvince: string | null = null;
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const colA = row[0];
+    const colB = row[1];
+    const rate = row[4];
+
+    // Section header row: No. column empty, LGU column has a label,
+    // and no rate — this marks a new group ("Provincial Government",
+    // "City", or a province name like "Marinduque").
+    if (colA === null && typeof colB === "string" && colB.trim()) {
+      const label = colB.trim();
+      const normalized = normalizeProvince(label);
+      currentProvince = VALID_PROVINCES.has(normalized) ? normalized : null;
+      continue;
+    }
+
+    // Data row under a recognized province section: a real municipality
+    // entry with its own daily rate.
+    if (
+      currentProvince &&
+      typeof colB === "string" &&
+      colB.trim() &&
+      typeof rate === "number"
+    ) {
+      const existing = result.get(currentProvince) ?? [];
+      existing.push({ lgu: colB.trim(), rate });
+      result.set(currentProvince, existing);
     }
   }
   return result;
@@ -159,17 +222,42 @@ function getUnutilizedFundsList(wb: XLSX.WorkBook): UnutilizedFundEntry[] {
   const out: UnutilizedFundEntry[] = [];
   if (!ws) return out;
   const rows = sheetToRows(ws);
-  for (let r = 0; r < rows.length; r++) {
-    for (let c = 0; c < rows[r].length; c++) {
-      const cell = rows[r][c];
+
+  // This sheet stacks several small side-by-side tables. Only the one headed
+  // "Starting Bal" / "Remaining Bal" holds real fund figures. A separate
+  // table further down is headed "Benef" / "No. of days" / "DOLE
+  // Counterpart" and its numeric columns sit in the same spots — so an
+  // unbounded scan used to pull rows like "LGU Bulalacao 15 -> 20" (a
+  // beneficiary count and a day count) in as fake fund balances. Bound the
+  // scan: start just below the balance header, stop at the next table.
+  const headerRow = rows.findIndex((r) =>
+    r.some((c) => lc(c).includes("starting bal")),
+  );
+  if (headerRow === -1) return out;
+
+  const isNextTableHeader = (r: any[]): boolean =>
+    r.some((c) => {
+      const v = lc(c);
+      return (
+        v === "benef" ||
+        v.includes("no. of days") ||
+        v.includes("dole counterpart")
+      );
+    });
+
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (isNextTableHeader(row)) break;
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
       if (
         typeof cell === "string" &&
         cell.trim() &&
         !cell.toLowerCase().includes("bal") &&
         !cell.toLowerCase().includes("benef")
       ) {
-        const startingBal = rows[r][c + 1];
-        const remainingBal = rows[r][c + 2];
+        const startingBal = row[c + 1];
+        const remainingBal = row[c + 2];
         if (typeof startingBal === "number") {
           out.push({
             lgu: cell.trim(),
@@ -259,7 +347,7 @@ export function deriveQuarterlyActuals(
   return final;
 }
 
-// --- NEW: A) Documents & Insurance status (Placement sheet, cols 8 & 9) ---
+// --- A) Documents & Insurance status (Placement sheet) ---
 interface DocInsuranceStatus {
   docsYes: number;
   docsNo: number;
@@ -274,12 +362,17 @@ function getDocumentsInsuranceStatus(
   const ws = findSheet(wb, (n) => n.toLowerCase().includes("placement"));
   if (!ws) return result;
   const rows = sheetToRows(ws);
-  const headerIdx = findHeaderRow(rows, "province", "no. of students");
+  const headerIdx = findHeaderRow(rows, "province", "complete documents");
   if (headerIdx === -1) return result;
+  const header = rows[headerIdx];
+  const provinceCol = colByHeader(header, "province");
+  const docsCol = colByHeader(header, "complete documents");
+  const gsisCol = colByHeader(header, "gsis");
+  if (provinceCol === -1 || docsCol === -1 || gsisCol === -1) return result;
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    const provinceRaw = row[19]; // column 20 (0-indexed 19): Province
+    const provinceRaw = row[provinceCol];
     if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
     const province = normalizeProvince(provinceRaw);
     if (!VALID_PROVINCES.has(province)) continue;
@@ -290,8 +383,8 @@ function getDocumentsInsuranceStatus(
       gsisYes: 0,
       totalChecked: 0,
     };
-    const docsVal = row[7]; // column 8 (0-indexed 7): Complete Documents
-    const gsisVal = row[8]; // column 9 (0-indexed 8): GSIS Insurance Form
+    const docsVal = row[docsCol]; // Complete Documents (Yes/No)
+    const gsisVal = row[gsisCol]; // GSIS Insurance Form (Yes/No)
 
     let checkedThisRow = false;
     if (typeof docsVal === "string") {
@@ -317,22 +410,26 @@ function getDocumentsInsuranceStatus(
   return result;
 }
 
-// --- NEW: B) Payment processed status (Payment sheet, col 11) ---
+// --- B) Payment processed status (Payment sheet) ---
 function getPaymentProcessedCount(wb: XLSX.WorkBook): Map<string, number> {
   const result = new Map<string, number>();
   const ws = findSheet(wb, (n) => n.toLowerCase().includes("payment"));
   if (!ws) return result;
   const rows = sheetToRows(ws);
-  const headerIdx = findHeaderRow(rows, "province", "date received");
+  const headerIdx = findHeaderRow(rows, "province", "processed");
   if (headerIdx === -1) return result;
+  const header = rows[headerIdx];
+  const provinceCol = colByHeader(header, "province");
+  const processedCol = colByHeader(header, "processed");
+  if (provinceCol === -1 || processedCol === -1) return result;
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    const provinceRaw = row[7]; // column 8 (0-indexed 7): Province
+    const provinceRaw = row[provinceCol];
     if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
     const province = normalizeProvince(provinceRaw);
     if (!VALID_PROVINCES.has(province)) continue;
-    const processedVal = row[10]; // column 11 (0-indexed 10): Processed (Yes/No)
+    const processedVal = row[processedCol]; // Processed (Yes/No)
     if (
       typeof processedVal === "string" &&
       processedVal.trim().toLowerCase() === "yes"
@@ -343,7 +440,7 @@ function getPaymentProcessedCount(wb: XLSX.WorkBook): Map<string, number> {
   return result;
 }
 
-// --- NEW: C) LGU/Employer vs. DOLE Counterpart split (Pledge sheet, cols 8 & 9) ---
+// --- C) LGU/Employer vs. DOLE Counterpart split (Pledge sheet) ---
 interface CounterpartSplit {
   lguCounterpart: number;
   doleCounterpart: number;
@@ -355,17 +452,22 @@ function getCounterpartSplit(
   const result = new Map<string, CounterpartSplit>();
   if (!ws) return result;
   const rows = sheetToRows(ws);
-  const headerIdx = findHeaderRow(rows, "province", "no. of students");
+  const headerIdx = findHeaderRow(rows, "province", "counterpart");
   if (headerIdx === -1) return result;
+  const header = rows[headerIdx];
+  const provinceCol = colByHeader(header, "province");
+  const lguCol = colByHeader(header, "lgu", "counterpart");
+  const doleCol = colByHeader(header, "dole", "counterpart");
+  if (provinceCol === -1 || lguCol === -1 || doleCol === -1) return result;
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    const provinceRaw = row[3]; // column 4 (0-indexed 3): Province
+    const provinceRaw = row[provinceCol];
     if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
     const province = normalizeProvince(provinceRaw);
     if (!VALID_PROVINCES.has(province)) continue;
-    const lgu = typeof row[7] === "number" ? row[7] : 0; // column 8: LGU/Employer Counterpart
-    const dole = typeof row[8] === "number" ? row[8] : 0; // column 9: DOLE Counterpart
+    const lgu = typeof row[lguCol] === "number" ? row[lguCol] : 0;
+    const dole = typeof row[doleCol] === "number" ? row[doleCol] : 0;
     const existing = result.get(province) ?? {
       lguCounterpart: 0,
       doleCounterpart: 0,
@@ -377,7 +479,7 @@ function getCounterpartSplit(
   return result;
 }
 
-// --- NEW: D) Processing speed: Date Received -> Date Submitted to ADMIN (Payment sheet) ---
+// --- D) Processing speed: Date Received -> Date Submitted to ADMIN (Payment sheet) ---
 interface ProcessingSpeed {
   totalDays: number;
   count: number;
@@ -388,18 +490,24 @@ function getProcessingSpeed(wb: XLSX.WorkBook): Map<string, ProcessingSpeed> {
   const ws = findSheet(wb, (n) => n.toLowerCase().includes("payment"));
   if (!ws) return result;
   const rows = sheetToRows(ws);
-  const headerIdx = findHeaderRow(rows, "province", "date received");
+  const headerIdx = findHeaderRow(rows, "date received", "date submitted");
   if (headerIdx === -1) return result;
+  const header = rows[headerIdx];
+  const provinceCol = colByHeader(header, "province");
+  const receivedCol = colByHeader(header, "date received");
+  const submittedCol = colByHeader(header, "date submitted");
+  if (provinceCol === -1 || receivedCol === -1 || submittedCol === -1)
+    return result;
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    const provinceRaw = row[7]; // column 8: Province
+    const provinceRaw = row[provinceCol];
     if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
     const province = normalizeProvince(provinceRaw);
     if (!VALID_PROVINCES.has(province)) continue;
 
-    const received = excelValueToDate(row[1]); // column 2: Date Received from FO
-    const submitted = excelValueToDate(row[2]); // column 3: Date Submitted to ADMIN
+    const received = excelValueToDate(row[receivedCol]);
+    const submitted = excelValueToDate(row[submittedCol]);
     if (!received || !submitted) continue;
     const days = (submitted.getTime() - received.getTime()) / 86400000;
     if (days < 0 || days > 365) continue; // sanity guard against bad/reversed dates
@@ -417,6 +525,7 @@ export interface SpesParseResult {
   warnings: string[];
   quarterly: Record<string, QuarterlyActual[]>;
   unutilizedFunds: UnutilizedFundEntry[];
+  lguRates: Record<string, LguRateEntry[]>;
 }
 
 interface AmountTotals {
@@ -533,11 +642,9 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
   const placedActuals = sumStudentsByProvince(placementSheet);
   const pledgedActuals = sumStudentsByProvince(pledgeSheet);
   const supplementalActuals = sumStudentsByProvince(supplementalSheet);
-  for (const [province, count] of supplementalActuals) {
-    pledgedActuals.set(province, (pledgedActuals.get(province) ?? 0) + count);
-  }
 
   const dailyRates = getDailyRatesByProvince(wb);
+  const lguRatesMap = getLguHiringRates(wb);
   const counterpartData = get100PercentCounterpart(wb);
   const unutilizedFunds = getUnutilizedFundsList(wb);
   const docsInsurance = getDocumentsInsuranceStatus(wb);
@@ -545,11 +652,45 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
   const counterpartSplit = getCounterpartSplit(pledgeSheet);
   const processingSpeed = getProcessingSpeed(wb);
 
+  // Sheet-found-but-unreadable checks. Each of these sheets was located by
+  // name, but its expected header row / layout didn't match — usually a
+  // revised logsheet template. Without these the dashboards would just show
+  // blanks with no explanation of why.
+  if (targetSheet && targets.size === 0)
+    warnings.push(
+      'The "Distribution of Target" sheet was found but no province target rows could be read (its layout may have changed) — targets will show as TBD.',
+    );
+  if (placementSheet && placedActuals.size === 0)
+    warnings.push(
+      "The Placement sheet was found but no province rows could be read (its layout may have changed) — placed figures will be blank.",
+    );
+  if (pledgeSheet && pledgedActuals.size === 0)
+    warnings.push(
+      "The Pledge sheet was found but no province rows could be read (its layout may have changed) — pledged figures will be blank.",
+    );
+  if (supplementalSheet && supplementalActuals.size === 0)
+    warnings.push(
+      "The Supplemental Pledge sheet was found but no province rows could be read (its layout may have changed) — supplemental figures will be blank.",
+    );
+  if (dailyRates.size === 0)
+    warnings.push(
+      'Could not read provincial daily hiring rates from the "SPES Hiring Rate" sheet — "additional fund needed" estimates will be skipped.',
+    );
+  if (placementSheet && docsInsurance.size === 0)
+    warnings.push(
+      "Could not read the Complete Documents / GSIS Insurance columns from the Placement sheet — the Documents note will be omitted.",
+    );
+  if (paymentSheet && processingSpeed.size === 0)
+    warnings.push(
+      "Could not read Date Received / Date Submitted to ADMIN from the Payment sheet — the processing-time note will be omitted.",
+    );
+
   const provinces = new Set<string>([
     ...targets.keys(),
     ...paidActuals.keys(),
     ...placedActuals.keys(),
     ...pledgedActuals.keys(),
+    ...supplementalActuals.keys(),
   ]);
   const periods: PeriodEntry[] = [];
   let regionTarget = 0;
@@ -558,6 +699,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
   let regionPaidFund = 0;
   let regionPlaced = 0;
   let regionPledged = 0;
+  let regionSupplemental = 0;
 
   for (const province of provinces) {
     const t = targets.get(province);
@@ -566,6 +708,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
     const paid = paidActuals.get(province) ?? { beneficiaries: 0, fund: 0 };
     const placed = placedActuals.get(province) ?? 0;
     const pledged = pledgedActuals.get(province) ?? 0;
+    const supplemental = supplementalActuals.get(province) ?? 0;
     const rate = dailyRates.get(province) ?? null;
     const counterpart = counterpartData.get(province);
     const docs = docsInsurance.get(province);
@@ -579,6 +722,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
     regionPaidFund += paid.fund;
     regionPlaced += placed;
     regionPledged += pledged;
+    regionSupplemental += supplemental;
 
     const additionalNeeded =
       targetBenef !== null
@@ -591,7 +735,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
         `Note: Placed count (${placed}) significantly exceeds target (${targetBenef}) — worth verifying against the source file for possible duplicate entries.`,
       );
     }
-    if (additionalNeeded !== null && rate !== null) {
+    if (additionalNeeded !== null && additionalNeeded > 0 && rate !== null) {
       const additionalFundNeeded = additionalNeeded * rate * 20;
       extraNotes.push(
         `Additional fund needed (est., via "${year} SPES Hiring Rate" sheet): ₱${additionalFundNeeded.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${additionalNeeded} × ₱${rate}/day × 20 days)`,
@@ -631,7 +775,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
       metrics: [
         {
           key: "pledged",
-          label: "No. of Students",
+          label: "No. of Students (Pledge)",
           unit: "count",
           target: targetBenef,
           actual: pledged,
@@ -639,8 +783,17 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
           sourceSheet: year + " SPES Pledge",
         },
         {
+          key: "supplemental",
+          label: "No. of Students (Supplemental)",
+          unit: "count",
+          target: null,
+          actual: supplemental,
+          isPlaceholder: true,
+          sourceSheet: year + " SPES Supplemental",
+        },
+        {
           key: "placed",
-          label: "No. of Students",
+          label: "No. of Students (Placement)",
           unit: "count",
           target: targetBenef,
           actual: placed,
@@ -677,7 +830,7 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
     metrics: [
       {
         key: "pledged",
-        label: "No. of Students",
+        label: "No. of Students (Pledge)",
         unit: "count",
         target: regionTarget || null,
         actual: regionPledged,
@@ -685,8 +838,17 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
         sourceSheet: year + " SPES Pledge",
       },
       {
+        key: "supplemental",
+        label: "No. of Students (Supplemental)",
+        unit: "count",
+        target: null,
+        actual: regionSupplemental,
+        isPlaceholder: true,
+        sourceSheet: year + " SPES Supplemental",
+      },
+      {
         key: "placed",
-        label: "No. of Students",
+        label: "No. of Students (Placement)",
         unit: "count",
         target: regionTarget || null,
         actual: regionPlaced,
@@ -725,5 +887,10 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
       '"Takers of Unutilized SPES Funds" sheet had no parseable LGU-level entries — shown only if present.',
     );
 
-  return { periods, warnings, quarterly, unutilizedFunds };
+  const lguRates: Record<string, LguRateEntry[]> = {};
+  for (const [province, entries] of lguRatesMap) {
+    lguRates[province] = entries;
+  }
+
+  return { periods, warnings, quarterly, unutilizedFunds, lguRates };
 }
