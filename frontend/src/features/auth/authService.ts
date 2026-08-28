@@ -1,4 +1,24 @@
+import { setCurrentUser } from "./authStore";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+// Fired once when a request that should have been authenticated comes back
+// 401 — i.e. the server-side session expired or was invalidated out from
+// under the SPA. The router listens for this and sends the user to /login;
+// without it, an expired session isn't noticed until some individual call
+// happens to fail and each screen reacts differently.
+let sessionExpiredSignalled = false;
+
+function signalSessionExpired(): void {
+  if (sessionExpiredSignalled) return;
+  sessionExpiredSignalled = true;
+  setCurrentUser(null);
+  window.dispatchEvent(new CustomEvent("auth:session-expired"));
+}
+
+export function resetSessionExpiredSignal(): void {
+  sessionExpiredSignalled = false;
+}
 
 export interface CurrentUser {
   id: number;
@@ -75,6 +95,17 @@ export async function apiFetch<T>(
     .catch(() => ({ message: response.statusText }));
 
   if (!response.ok) {
+    // A 401 on anything other than the auth probes themselves means the
+    // session died mid-use — tell the app so it can bounce to /login.
+    // /api/user, /login and /logout are expected to 401 in normal flows.
+    if (
+      response.status === 401 &&
+      !path.startsWith("/api/user") &&
+      !path.startsWith("/login") &&
+      !path.startsWith("/logout")
+    ) {
+      signalSessionExpired();
+    }
     throw new ApiError(response.status, body as ApiErrorBody);
   }
   return body as T;
@@ -94,6 +125,7 @@ export async function login(
     body: JSON.stringify({ username, password }),
     xsrf,
   });
+  resetSessionExpiredSignal();
   return result ?? {};
 }
 
@@ -104,7 +136,9 @@ export async function logout(): Promise<void> {
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
-    return await apiFetch<CurrentUser>("/api/user");
+    const user = await apiFetch<CurrentUser>("/api/user");
+    resetSessionExpiredSignal();
+    return user;
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return null;
     throw err;

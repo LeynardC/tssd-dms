@@ -5,6 +5,8 @@ import {
   getMyOAuthLinks,
   unlinkOAuthAccount,
   startGoogleLink,
+  oauthErrorMessage,
+  googleSignInEnabled,
   type OAuthAccountLink,
 } from "../data/oauthLinkService";
 import { useToast } from "../../../composables/useToast";
@@ -90,7 +92,7 @@ onMounted(async () => {
     );
     router.replace({ query: { ...route.query, oauth_link: undefined } });
   } else if (typeof route.query.oauth_error === "string") {
-    showToast(route.query.oauth_error, "error");
+    showToast(oauthErrorMessage(route.query.oauth_error), "error");
     router.replace({ query: { ...route.query, oauth_error: undefined } });
   }
 });
@@ -149,17 +151,21 @@ onMounted(async () => {
           Your last request ({{ lastRejected.provider_email }}) was declined{{
             lastRejected.rejection_reason ? `: ${lastRejected.rejection_reason}` : "."
           }}
-          You can try linking again.
+          <template v-if="googleSignInEnabled">You can try linking again.</template>
         </p>
         <p v-else class="text-sm text-black/50 mb-4">
           No Google account linked yet.
         </p>
         <button
+          v-if="googleSignInEnabled"
           @click="handleLink"
           class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition"
         >
           Link Google Account
         </button>
+        <p v-else class="text-sm text-black/50 italic">
+          Google sign-in is not currently enabled for this system.
+        </p>
       </template>
     </template>
   </div>

@@ -5,7 +5,11 @@ import { login, getCurrentUser, ApiError } from "../authService";
 import { setCurrentUser } from "../authStore";
 import { twoFactorChallenge } from "../data/twoFactorService";
 import { loginWithPasskey } from "../data/passkeyService";
-import { startGoogleLogin } from "../data/oauthLinkService";
+import {
+  startGoogleLogin,
+  oauthErrorMessage,
+  googleSignInEnabled,
+} from "../data/oauthLinkService";
 import doleLogo from "../../../assets/dole-logo.png";
 
 const router = useRouter();
@@ -27,7 +31,7 @@ const passkeyLoading = ref(false);
 // e.g. "still awaiting Chief approval."
 onMounted(() => {
   if (typeof route.query.oauth_error === "string") {
-    error.value = route.query.oauth_error;
+    error.value = oauthErrorMessage(route.query.oauth_error);
     router.replace({ query: { ...route.query, oauth_error: undefined } });
   }
 });
@@ -244,6 +248,7 @@ async function handleTwoFactorSubmit() {
         </button>
 
         <button
+          v-if="googleSignInEnabled"
           type="button"
           @click="handleGoogleLogin"
           class="w-full border border-black/20 text-black/70 rounded py-2 font-medium hover:bg-black/5 transition mt-3"

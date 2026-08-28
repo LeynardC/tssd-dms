@@ -1,14 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
-import {
-  changePassword,
-  logout,
-  login,
-  getCurrentUser,
-  ApiError,
-} from "../authService";
-import { currentUser, setCurrentUser } from "../authStore";
+import { changePassword, getCurrentUser, ApiError } from "../authService";
+import { setCurrentUser } from "../authStore";
 import PasswordInput from "../../../components/PasswordInput.vue";
 
 const router = useRouter();
@@ -54,24 +48,14 @@ async function handleSubmit() {
     return;
   }
 
-  const username = currentUser.value?.username;
-  if (!username) {
-    router.push("/login");
-    return;
-  }
-
   loading.value = true;
   try {
     await changePassword(newPassword.value);
 
-    try {
-      await logout();
-    } catch {
-      // Harmless if the session was already gone some other way.
-    }
-
-    await login(username, newPassword.value);
-
+    // The backend keeps this session valid through the password change, so
+    // there's no logout/log-back-in round-trip. Just re-read the user (the
+    // must_change_password flag is now cleared) and let the router guard
+    // route on to profile completion or the dashboard.
     const user = await getCurrentUser();
     setCurrentUser(user);
     router.push("/monitoring");
