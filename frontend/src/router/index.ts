@@ -66,6 +66,13 @@ const routes = [
         props: true,
       },
       {
+        path: "documents/:programId/recycle-bin",
+        name: "recycle-bin",
+        component: () =>
+          import("../features/monitoring/views/RecycleBin.vue"),
+        props: true,
+      },
+      {
         path: "monitoring/:programId/upload",
         name: "upload-entry",
         component: () => import("../features/monitoring/views/UploadEntry.vue"),
@@ -100,19 +107,23 @@ const routes = [
         meta: { chiefOnly: true },
       },
       {
-        path: "categories",
-        name: "categories",
+        path: "programs",
+        name: "programs",
         component: () =>
-          import("../features/categories/views/CategoryList.vue"),
+          import("../features/programs/views/ProgramList.vue"),
+      },
+      {
+        path: "programs/:programCode",
+        name: "program-profile",
+        component: () =>
+          import("../features/programs/views/ProgramProfile.vue"),
+        props: true,
       },
       {
         path: "units",
         name: "units",
-        component: () => import("../views/ComingSoon.vue"),
-        props: {
-          title: "Units",
-          description: "Unit overview and staff assignment — coming soon.",
-        },
+        component: () => import("../features/units/views/UnitList.vue"),
+        meta: { chiefOnly: true },
       },
       {
         path: "reports",
@@ -164,6 +175,23 @@ router.beforeEach(async (to) => {
 
   if (to.meta.chiefOnly && user.role !== "chief") {
     return { path: "/monitoring" };
+  }
+
+  // Staff are scoped to a single program, so the unit-overview picker screen
+  // is a pointless extra click for them — send them straight to their own
+  // program's periods. Chief oversees every program, so unit-overview stays
+  // her landing page. This also covers every OTHER path that lands on
+  // "/monitoring" above (post-onboarding, chiefOnly bounce-back) since a
+  // redirect re-runs this guard against the new target.
+  if (
+    to.name === "unit-overview" &&
+    user.role === "staff" &&
+    user.assigned_program
+  ) {
+    return {
+      name: "program-periods",
+      params: { programId: user.assigned_program },
+    };
   }
 
   return true;

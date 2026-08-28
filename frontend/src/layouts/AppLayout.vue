@@ -6,7 +6,11 @@ import ToastContainer from "../components/ToastContainer.vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import PromptDialog from "../components/PromptDialog.vue";
 import { logout } from "../features/auth/authService";
-import { setCurrentUser } from "../features/auth/authStore";
+import { currentUser, setCurrentUser } from "../features/auth/authStore";
+import {
+  ensureProgramsLoaded,
+  activePrograms,
+} from "../features/programs/data/programCache";
 import doleLogo from "../assets/dole-logo.jpg";
 import {
   Home,
@@ -39,7 +43,7 @@ const navItems: NavItem[] = [
   { label: "Documents", icon: FileText, path: "/documents" },
   { label: "Monitoring", icon: BarChart3, path: "/monitoring" },
   { label: "Users & Roles", icon: Users, path: "/users", chiefOnly: true },
-  { label: "Categories", icon: Tag, path: "/categories" },
+  { label: "Programs", icon: Tag, path: "/programs" },
   { label: "Units", icon: Building2, path: "/units", chiefOnly: true },
   { label: "Reports & Exports", icon: TrendingUp, path: "/reports" },
   { label: "Settings", icon: Settings, path: "/settings" },
@@ -75,10 +79,26 @@ function handleClickOutside(e: MouseEvent) {
 
 onMounted(() => document.addEventListener("click", handleClickOutside));
 onUnmounted(() => document.removeEventListener("click", handleClickOutside));
+onMounted(ensureProgramsLoaded);
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + "/");
 }
+
+// Sidebar identity — name + position + the program/department they belong
+// to, replacing the old flat "Staff View"/"Chief View" label. Chief isn't
+// scoped to a single unit or program (she oversees all of them), so those
+// fields stay null on her account and this falls back to a fixed label
+// instead of trying to look one up.
+const displayPosition = computed(
+  () => currentUser.value?.position ?? (currentRole.value === "chief" ? "Chief" : "Staff"),
+);
+const displayProgram = computed(() => {
+  if (currentRole.value === "chief") return "All Programs";
+  const code = currentUser.value?.assigned_program;
+  if (!code) return null;
+  return activePrograms.value.find((p) => p.code === code)?.name ?? code;
+});
 
 // Mobile sidebar: hidden by default, toggled via hamburger, closed on
 // navigation or backdrop tap. Desktop ignores this entirely (sidebar is
@@ -226,12 +246,15 @@ async function handleLogout() {
       </nav>
 
       <div class="px-5 py-4 border-t border-white/10">
+        <p class="text-sm font-medium text-white truncate">
+          {{ currentUser?.name }}
+        </p>
         <p class="text-xs text-white/80 mb-1 flex items-center gap-1.5">
           <component
             :is="currentRole === 'staff' ? FolderOpen : BarChart3"
             :size="14"
           />
-          {{ currentRole === "staff" ? "Staff View" : "Chief View" }}
+          {{ displayPosition }}<span v-if="displayProgram"> · {{ displayProgram }}</span>
         </p>
         <button
           @click="handleLogout"
