@@ -13,6 +13,7 @@ import PreviewModal from "../components/PreviewModal.vue";
 import { currentRole } from "../role";
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 
 const { confirmAction } = useConfirm();
@@ -28,6 +29,10 @@ const crumbs = computed<Crumb[]>(() => [
 const { allFiles, periods, loading, error, refresh } = useProgramFiles(
   computed(() => props.programId),
 );
+
+// Pick up another person's uploads/removals for this program when the user
+// tabs back, without a manual reload and without polling while away.
+useVisibilityRefresh(() => refresh({ background: true }));
 
 const sortedFiles = computed(() =>
   [...allFiles.value].sort((a, b) => b.created_at.localeCompare(a.created_at)),

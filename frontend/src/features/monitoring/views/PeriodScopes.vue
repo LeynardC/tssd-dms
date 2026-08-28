@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import { getProgram } from "../data/mockMonitoring";
 import { useProgramFiles } from "../composables/useProgramFiles";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import MetricComparisonChart from "../components/MetricComparisonChart.vue";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { formatCurrency } from "../../../utils/format";
@@ -18,9 +19,12 @@ const crumbs = computed<Crumb[]>(() => [
   { label: props.periodId },
 ]);
 
-const { periods, loading, error } = useProgramFiles(
+const { periods, loading, error, refresh } = useProgramFiles(
   computed(() => props.programId),
 );
+
+// Re-pull this program's monitoring data when the user tabs back.
+useVisibilityRefresh(() => refresh({ background: true }));
 
 function matchesPeriodId(
   p: { year: number; quarter?: string },

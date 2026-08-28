@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import { getProgram, balance, type Metric } from "../data/mockMonitoring";
 import { useProgramFiles } from "../composables/useProgramFiles";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import { formatCurrency } from "../../../utils/format";
 import {
@@ -21,9 +22,13 @@ const props = defineProps<{
   scope: string;
 }>();
 
-const { periods, loading, error } = useProgramFiles(
+const { periods, loading, error, refresh } = useProgramFiles(
   computed(() => props.programId),
 );
+
+// Re-pull this program's monitoring data when the user tabs back, so a
+// dashboard left open reflects a colleague's newer upload.
+useVisibilityRefresh(() => refresh({ background: true }));
 
 const crumbs = computed<Crumb[]>(() => [
   { label: "Monitoring", to: { name: "unit-overview" } },

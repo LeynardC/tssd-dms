@@ -17,6 +17,7 @@ import {
 } from "../data/recycleBinStore";
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 
 const props = defineProps<{ programId: string }>();
@@ -32,22 +33,36 @@ const canManage = computed(() => canManageFolders(props.programId));
 const items = ref<BinItem[]>([]);
 const loading = ref(true);
 const loadError = ref("");
+const busy = ref(false);
 
-async function loadAll() {
-  loading.value = true;
-  loadError.value = "";
+// `background: true` re-pulls in place with no skeleton / error flash — used
+// by the on-focus refresh so another program member's restore or purge shows
+// up without a manual reload.
+async function loadAll({ background = false }: { background?: boolean } = {}) {
+  if (!background) {
+    loading.value = true;
+    loadError.value = "";
+  }
   try {
     items.value = await getRecycleBin(props.programId);
   } catch (err) {
-    loadError.value =
-      err instanceof Error ? err.message : "Could not load the Recycle Bin.";
+    if (!background) {
+      loadError.value =
+        err instanceof Error ? err.message : "Could not load the Recycle Bin.";
+    }
   } finally {
-    loading.value = false;
+    if (!background) loading.value = false;
   }
 }
 
-onMounted(loadAll);
+onMounted(() => loadAll());
 onMounted(ensureProgramsLoaded);
+
+// Don't refresh mid-action — a restore/purge/empty in flight already
+// re-pulls the list when it finishes.
+useVisibilityRefresh(() => loadAll({ background: true }), {
+  canRun: () => !busy.value,
+});
 
 const crumbs = computed(
   () =>
@@ -160,6 +175,7 @@ function subtitle(item: BinItem): string {
 
 // --- Actions ---
 async function handleRestore(item: BinItem) {
+  busy.value = true;
   try {
     if (item.type === "folder") {
       await restoreFolder(item.id);
@@ -173,6 +189,8 @@ async function handleRestore(item: BinItem) {
       err instanceof Error ? err.message : "Could not restore this item.",
       "error",
     );
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -185,6 +203,7 @@ async function handlePurge(item: BinItem) {
   });
   if (!ok) return;
 
+  busy.value = true;
   try {
     if (item.type === "folder") {
       await purgeFolder(item.id);
@@ -198,6 +217,8 @@ async function handlePurge(item: BinItem) {
       err instanceof Error ? err.message : "Could not permanently delete this item.",
       "error",
     );
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -210,6 +231,7 @@ async function handleEmptyBin() {
   });
   if (!ok) return;
 
+  busy.value = true;
   try {
     const result = await emptyBin(props.programId);
     const parts: string[] = [];
@@ -228,6 +250,8 @@ async function handleEmptyBin() {
       err instanceof Error ? err.message : "Could not empty the Recycle Bin.",
       "error",
     );
+  } finally {
+    busy.value = false;
   }
 }
 </script>

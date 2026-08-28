@@ -43,6 +43,7 @@ import {
 } from "../data/activityLogStore";
 import PreviewModal from "../components/PreviewModal.vue";
 import { useFloatingMenu } from "../../../composables/useFloatingMenu";
+import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import { Trash2 } from "@lucide/vue";
 
 import { useConfirm } from "../../../composables/useConfirm";
@@ -160,9 +161,15 @@ const childFolders = computed(() =>
     .sort((a, b) => a.name.localeCompare(b.name)),
 );
 
-async function loadAll() {
-  loading.value = true;
-  loadError.value = "";
+// `background: true` refreshes the list in place without the skeleton or an
+// error state — used by the on-focus refresh, where yanking the view out
+// from under the user or flashing an error over still-valid data would be
+// worse than silently keeping what's on screen.
+async function loadAll({ background = false }: { background?: boolean } = {}) {
+  if (!background) {
+    loading.value = true;
+    loadError.value = "";
+  }
   try {
     const [folderResult, fileResult] = await Promise.all([
       getFolders(props.programId),
@@ -171,15 +178,17 @@ async function loadAll() {
     allFolders.value = folderResult;
     files.value = fileResult;
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : "Could not load.";
+    if (!background) {
+      loadError.value = err instanceof Error ? err.message : "Could not load.";
+    }
   } finally {
-    loading.value = false;
+    if (!background) loading.value = false;
   }
 }
 
-onMounted(loadAll);
+onMounted(() => loadAll());
 onMounted(ensureProgramsLoaded);
-watch(() => props.folderPath, loadAll);
+watch(() => props.folderPath, () => loadAll());
 watch(() => props.folderPath, closeMenu);
 
 function getStoredLayout(): "grid" | "list" {
@@ -833,6 +842,23 @@ function handleViewData() {
     params: { programId: props.programId, uploadId: file.id },
   });
 }
+
+// No real-time updates in this app — instead, when the user tabs back to
+// this folder, quietly re-pull it (and the monitoring data behind the
+// shadow-detection check) so another person's uploads / renames / deletes
+// show up. Skipped while an upload or a row-scoped menu/prompt is mid-flight
+// so the refresh can't yank the target out from under them.
+useVisibilityRefresh(
+  () =>
+    Promise.all([
+      loadAll({ background: true }),
+      refreshExistingPeriods({ background: true }),
+    ]),
+  {
+    canRun: () =>
+      !uploading.value && !openMenu.value && !duplicatePrompt.value,
+  },
+);
 </script>
 
 <template>
