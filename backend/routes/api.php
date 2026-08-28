@@ -7,9 +7,12 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Http\Controllers\FileController;
-use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ProgramController;
+use App\Http\Controllers\UnitController;
 use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\SearchController;
+use App\Http\Controllers\RecycleBinController;
+use App\Http\Controllers\OAuthLinkController;
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
@@ -44,8 +47,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/profile/complete', function (Request $request) {
         $validated = $request->validate([
             'position' => ['required', 'string', 'max:255'],
-            'unit' => ['required', 'string', Rule::in(['unit_001', 'unit_002', 'unit_003'])],
-            'assigned_program' => ['required', 'string', 'max:255'],
+            'unit' => ['required', 'string', Rule::exists('units', 'code')->where(fn ($q) => $q->where('retired', false))],
+            'assigned_program' => ['required', 'string', Rule::exists('programs', 'code')->where(fn ($q) => $q->where('retired', false))],
         ]);
 
         $request->user()->forceFill([
@@ -62,8 +65,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/folders', [FolderController::class, 'store']);
     Route::patch('/folders/{folder}/rename', [FolderController::class, 'rename']);
     Route::patch('/folders/{folder}/retire', [FolderController::class, 'retire']);
+    Route::patch('/folders/{folder}/restore', [FolderController::class, 'restore']);
+    Route::delete('/folders/{folder}/purge', [FolderController::class, 'purge']);
 
-    Route::get('/categories', [CategoryController::class, 'index']);
+    Route::get('/programs', [ProgramController::class, 'index']);
+    Route::get('/programs/{program:code}', [ProgramController::class, 'show']);
+
+    Route::get('/units', [UnitController::class, 'index']);
 
     Route::get('/files', [FileController::class, 'index']);
     Route::post('/files', [FileController::class, 'store']);
@@ -77,18 +85,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
     });
 
     Route::get('/files/{file}', [FileController::class, 'show']);
-    Route::get('/files/{file}', [FileController::class, 'show']);
     Route::get('/files/{file}/download', [FileController::class, 'download']);
     Route::get('/files/{file}/preview', [FileController::class, 'preview']);
     Route::patch('/files/{file}/rename', [FileController::class, 'rename']);
     Route::patch('/files/{file}/move', [FileController::class, 'move']);
+    Route::post('/files/{file}/replace', [FileController::class, 'replace']);
     Route::patch('/files/{file}/toggle-lock', [FileController::class, 'toggleLock']);
     Route::delete('/files/{file}', [FileController::class, 'destroy']);
+    Route::patch('/files/{file}/restore', [FileController::class, 'restore'])->withTrashed();
+    Route::delete('/files/{file}/purge', [FileController::class, 'purge'])->withTrashed();
 
+    Route::get('/recycle-bin', [RecycleBinController::class, 'index']);
+    Route::post('/recycle-bin/empty', [RecycleBinController::class, 'emptyBin']);
 
     Route::get('/activity-log', [ActivityLogController::class, 'index']);
 
     Route::get('/search', [SearchController::class, 'index']);
+
+    // A staff member's own linked/pending sign-in accounts (Settings page).
+    Route::get('/oauth-links', [OAuthLinkController::class, 'index']);
+    Route::delete('/oauth-links/{link}', [OAuthLinkController::class, 'destroy']);
 
     #endregion
 
@@ -105,9 +121,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::patch('/staff/{user}', [StaffController::class, 'update']);
         Route::delete('/staff/{user}', [StaffController::class, 'destroy']);
 
-        Route::post('/categories', [CategoryController::class, 'store']);
-        Route::patch('/categories/{category}/rename', [CategoryController::class, 'rename']);
-        Route::patch('/categories/{category}/toggle-status', [CategoryController::class, 'toggleStatus']);
+        Route::post('/programs', [ProgramController::class, 'store']);
+        Route::patch('/programs/{program}/rename', [ProgramController::class, 'rename']);
+        Route::patch('/programs/{program}/toggle-status', [ProgramController::class, 'toggleStatus']);
+        Route::patch('/programs/{program:code}/profile', [ProgramController::class, 'updateProfile']);
+
+        Route::post('/units', [UnitController::class, 'store']);
+        Route::patch('/units/{unit}/rename', [UnitController::class, 'rename']);
+        Route::patch('/units/{unit}/description', [UnitController::class, 'updateDescription']);
+        Route::patch('/units/{unit}/toggle-status', [UnitController::class, 'toggleStatus']);
+
+        Route::get('/oauth-links/pending', [OAuthLinkController::class, 'pending']);
+        Route::post('/oauth-links/{link}/approve', [OAuthLinkController::class, 'approve']);
+        Route::post('/oauth-links/{link}/reject', [OAuthLinkController::class, 'reject']);
     });
 
     #endregion
