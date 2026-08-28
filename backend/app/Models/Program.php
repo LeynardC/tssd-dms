@@ -5,13 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Category extends Model
+class Program extends Model
 {
-    protected $fillable = ['code', 'name', 'unit', 'created_by', 'retired'];
+    protected $table = 'programs';
+
+    protected $fillable = [
+        'code', 'name', 'unit', 'created_by', 'retired',
+        'founded_at', 'vision', 'mission', 'scope',
+    ];
 
     protected function casts(): array
     {
-        return ['retired' => 'boolean'];
+        return ['retired' => 'boolean', 'founded_at' => 'date'];
     }
 
     public function creator(): BelongsTo

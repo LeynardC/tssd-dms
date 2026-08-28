@@ -4,9 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class File extends Model
 {
+    use SoftDeletes;
+
     protected $table = 'files';
 
     protected $fillable = [
@@ -20,6 +23,7 @@ class File extends Model
         'description',
         'locked',
         'parsed_data',
+        'deleted_by',
     ];
 
     protected function casts(): array
@@ -38,5 +42,10 @@ class File extends Model
     public function uploader(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function deletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 }
