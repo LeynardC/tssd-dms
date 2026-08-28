@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
   programs,
-  balance,
   type PeriodEntry,
+  type Metric,
 } from "../../monitoring/data/mockMonitoring";
-import { getPeriodsWithSource } from "../../monitoring/data/uploadStore";
-import { exportPeriodToExcel } from "../exportUtils";
+import { hasParser } from "../../monitoring/parsers";
+import { useProgramFiles } from "../../monitoring/composables/useProgramFiles";
+import { exportSheetNames } from "../reportShared";
+import type { ReportInput } from "../reportShared";
+import { currentUser } from "../../auth/authStore";
 import Modal from "../../../components/Modal.vue";
 import { useToast } from "../../../composables/useToast";
 
-const selectedProgramId = ref(programs[0]?.id ?? "");
 const { showToast } = useToast();
+
+// Only programs with a real parser can ever have monitoring data to export
+// (SPES today) — same rule as the Monitoring Hub and global search.
+const exportablePrograms = computed(() =>
+  programs.filter((p) => hasParser(p.id)),
+);
+const selectedProgramId = ref(exportablePrograms.value[0]?.id ?? "");
+
+// Real, API-backed monitoring data — the same source the dashboards use.
+const { periods, loading, error } = useProgramFiles(selectedProgramId);
 
 function periodId(p: { year: number; quarter?: string }): string {
   return p.quarter ? `${p.year}-${p.quarter}` : `${p.year}`;
@@ -23,9 +35,8 @@ interface PeriodOption {
 }
 
 const availablePeriods = computed<PeriodOption[]>(() => {
-  const entries = getPeriodsWithSource(selectedProgramId.value);
   const seen = new Map<string, PeriodOption>();
-  entries.forEach(({ period }) => {
+  periods.value.forEach(({ period }) => {
     const id = periodId(period);
     if (!seen.has(id)) seen.set(id, { id, label: period.label });
   });
@@ -33,6 +44,9 @@ const availablePeriods = computed<PeriodOption[]>(() => {
 });
 
 const selectedPeriodId = ref("");
+watch(selectedProgramId, () => {
+  selectedPeriodId.value = "";
+});
 
 function matchesPeriodId(
   p: { year: number; quarter?: string },
@@ -47,12 +61,72 @@ const exportReady = computed(
 
 const showPreview = ref(false);
 
-const previewEntries = computed<PeriodEntry[]>(() => {
-  if (!selectedPeriodId.value) return [];
-  return getPeriodsWithSource(selectedProgramId.value)
-    .filter(({ period }) => matchesPeriodId(period, selectedPeriodId.value))
-    .map(({ period }) => period);
-});
+// All province/region rows of the selected period share one source file.
+const selectedMatches = computed(() =>
+  periods.value.filter(({ period }) =>
+    matchesPeriodId(period, selectedPeriodId.value),
+  ),
+);
+const previewEntries = computed<PeriodEntry[]>(() =>
+  selectedMatches.value.map(({ period }) => period),
+);
+const sourceFile = computed(() => selectedMatches.value[0]?.file ?? null);
+
+// --- preview shaping: region headline + per-province breakdown -------------
+const AGGREGATE = /region|mimaropa|total/i;
+const previewRegion = computed(() =>
+  previewEntries.value.find((e) => AGGREGATE.test(e.scope)) ?? null,
+);
+const previewProvinces = computed(() =>
+  previewEntries.value.filter((e) => !AGGREGATE.test(e.scope)),
+);
+
+// "No. of Students (Pledge)" -> "Pledge", "No. of Beneficiaries" -> "Beneficiaries"
+function shortLabel(label: string): string {
+  const s = label
+    .replace(/^no\.\s*of\s*(students\s*)?/i, "")
+    .replace(/[()]/g, "")
+    .trim();
+  return s || label;
+}
+function pctOfTarget(m: Metric | undefined): number | null {
+  if (!m || m.target === null || m.target === 0) return null;
+  return (m.actual / m.target) * 100;
+}
+function pctTone(m: Metric | undefined): string {
+  const p = pctOfTarget(m);
+  if (p === null) return "text-black/40";
+  if (p >= 95) return "text-green-700";
+  if (p >= 60) return "text-amber-600";
+  return "text-dole-red";
+}
+function barTone(m: Metric | undefined): string {
+  const p = pctOfTarget(m);
+  if (p === null) return "bg-black/10";
+  if (p >= 95) return "bg-green-600";
+  if (p >= 60) return "bg-amber-500";
+  return "bg-dole-red";
+}
+function pctLabel(m: Metric | undefined): string {
+  const p = pctOfTarget(m);
+  return p === null ? "—" : Math.round(p) + "%";
+}
+function pctWidth(m: Metric | undefined): string {
+  const p = pctOfTarget(m);
+  return (p === null ? 0 : Math.min(p, 100)) + "%";
+}
+function fmtValue(m: Metric | undefined): string {
+  if (!m) return "—";
+  if (m.unit === "currency")
+    return "₱" + m.actual.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return m.actual.toLocaleString();
+}
+function fmtTarget(m: Metric | undefined): string {
+  if (!m || m.target === null) return "no target";
+  if (m.unit === "currency")
+    return "₱" + m.target.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return m.target.toLocaleString();
+}
 
 const selectedProgramName = computed(
   () => programs.find((p) => p.id === selectedProgramId.value)?.name ?? "",
@@ -61,6 +135,15 @@ const selectedPeriodLabel = computed(
   () =>
     availablePeriods.value.find((p) => p.id === selectedPeriodId.value)
       ?.label ?? "",
+);
+
+const includedSheets = computed(() =>
+  exportSheetNames({
+    entries: previewEntries.value,
+    quarterly: sourceFile.value?.data.quarterly,
+    unutilizedFunds: sourceFile.value?.data.unutilizedFunds,
+    lguRates: sourceFile.value?.data.lguRates,
+  }),
 );
 
 function openPreview() {
@@ -75,25 +158,80 @@ function openPreview() {
   showPreview.value = true;
 }
 
-function confirmDownload() {
-  exportPeriodToExcel(
-    selectedProgramName.value,
-    selectedPeriodLabel.value,
-    previewEntries.value,
-  );
+const xlsBuilding = ref(false);
+
+async function downloadExcel() {
+  if (xlsBuilding.value) return;
+  xlsBuilding.value = true;
+  try {
+    const { exportPeriodToExcel } = await import("../exportUtils");
+    await exportPeriodToExcel(reportInput());
+    showPreview.value = false;
+    showToast("Excel workbook downloaded.", "success");
+  } catch {
+    showToast("Could not build the workbook. Please try again.", "error");
+  } finally {
+    xlsBuilding.value = false;
+  }
+}
+
+function preparedByLabel(): string {
+  const u = currentUser.value;
+  if (!u) return "TSSD";
+  const title = u.position ?? (u.role === "chief" ? "TSSD Chief" : "TSSD Staff");
+  return `${u.name} · ${title}`;
+}
+
+// --- PDF report: preview the exact PDF; the viewer's own toolbar downloads/prints it ---
+const showReportPreview = ref(false);
+const pdfPreviewUrl = ref("");
+const pdfBuilding = ref(false);
+
+function reportInput(): ReportInput {
+  return {
+    programName: selectedProgramName.value,
+    programFullName:
+      programs.find((p) => p.id === selectedProgramId.value)?.fullName ??
+      selectedProgramName.value,
+    periodLabel: selectedPeriodLabel.value,
+    preparedBy: preparedByLabel(),
+    sourceFileName: sourceFile.value?.fileName ?? "—",
+    entries: previewEntries.value,
+    quarterly: sourceFile.value?.data.quarterly,
+    unutilizedFunds: sourceFile.value?.data.unutilizedFunds,
+    lguRates: sourceFile.value?.data.lguRates,
+  };
+}
+
+async function openReportPreview() {
   showPreview.value = false;
+  showReportPreview.value = true;
+  pdfBuilding.value = true;
+  try {
+    const { reportPdfPreviewUrl } = await import("../reportPdf");
+    pdfPreviewUrl.value = await reportPdfPreviewUrl(reportInput());
+  } catch {
+    showToast("Could not build the report. Please try again.", "error");
+    closeReportPreview();
+  } finally {
+    pdfBuilding.value = false;
+  }
 }
 
-function formatMetricValue(unit: string, value: number | string): string {
-  if (typeof value !== "number") return String(value);
-  if (unit === "currency")
-    return "₱" + value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return value.toLocaleString();
+function closeReportPreview() {
+  showReportPreview.value = false;
+  if (pdfPreviewUrl.value) {
+    URL.revokeObjectURL(pdfPreviewUrl.value);
+    pdfPreviewUrl.value = "";
+  }
 }
 
-function onProgramChange() {
-  selectedPeriodId.value = "";
+function onReportKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && showReportPreview.value) closeReportPreview();
 }
+onMounted(() => document.addEventListener("keydown", onReportKeydown));
+onUnmounted(() => document.removeEventListener("keydown", onReportKeydown));
+
 </script>
 
 <template>
@@ -106,7 +244,14 @@ function onProgramChange() {
     </header>
 
     <main class="max-w-2xl mx-auto px-8 py-8">
-      <div class="bg-white border border-black/10 rounded-lg p-6">
+      <div
+        v-if="exportablePrograms.length === 0"
+        class="bg-white border border-black/10 border-dashed rounded-lg p-8 text-center text-sm text-black/60"
+      >
+        No program has monitoring data available to export yet.
+      </div>
+
+      <div v-else class="bg-white border border-black/10 rounded-lg p-6">
         <div class="mb-4">
           <label for="export-program" class="block text-sm font-medium mb-1"
             >Program</label
@@ -114,10 +259,9 @@ function onProgramChange() {
           <select
             id="export-program"
             v-model="selectedProgramId"
-            @change="onProgramChange"
             class="w-full border border-black/20 rounded p-2 text-sm"
           >
-            <option v-for="p in programs" :key="p.id" :value="p.id">
+            <option v-for="p in exportablePrograms" :key="p.id" :value="p.id">
               {{ p.name }} — {{ p.fullName }}
             </option>
           </select>
@@ -130,14 +274,16 @@ function onProgramChange() {
           <select
             id="export-period"
             v-model="selectedPeriodId"
-            :disabled="availablePeriods.length === 0"
+            :disabled="loading || availablePeriods.length === 0"
             class="w-full border border-black/20 rounded p-2 text-sm disabled:bg-black/5"
           >
             <option value="" disabled>
               {{
-                availablePeriods.length
-                  ? "Select a period"
-                  : "No data uploaded yet"
+                loading
+                  ? "Loading periods…"
+                  : availablePeriods.length
+                    ? "Select a period"
+                    : "No monitoring data uploaded yet"
               }}
             </option>
             <option v-for="p in availablePeriods" :key="p.id" :value="p.id">
@@ -151,13 +297,20 @@ function onProgramChange() {
           :disabled="!exportReady"
           class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Preview Export
+          Preview &amp; export
         </button>
+
+        <p v-if="error" class="text-dole-red text-sm mt-3">{{ error }}</p>
       </div>
 
-      <p class="text-xs text-black/60 italic mt-4">
-        The exported file includes every province's target, actual, balance, and
-        source sheet for the selected period.
+      <p
+        v-if="exportablePrograms.length > 0"
+        class="text-xs text-black/60 italic mt-4"
+      >
+        Two formats: an <b>Excel workbook</b> (Summary, Quarterly, Notes &amp;
+        Flags, Unutilized Funds, Hiring Rates) for working with the figures, and
+        a formatted <b>PDF report</b> for transmittal. Both cover the selected
+        period.
       </p>
     </main>
 
@@ -166,47 +319,102 @@ function onProgramChange() {
       :title="selectedProgramName + ' — ' + selectedPeriodLabel"
       @close="showPreview = false"
     >
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-left text-black/50 border-b border-black/10">
-            <th class="pb-2">Scope</th>
-            <th class="pb-2">Metric</th>
-            <th class="pb-2">Actual</th>
-            <th class="pb-2">Target</th>
-            <th class="pb-2">Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="entry in previewEntries" :key="entry.scope">
-            <tr
-              v-for="m in entry.metrics"
-              :key="entry.scope + m.key"
-              class="border-b border-black/5"
+      <div class="flex flex-wrap items-center gap-1.5 mb-4">
+        <span class="text-xs text-black/50 mr-1">This export contains:</span>
+        <span
+          v-for="s in includedSheets"
+          :key="s"
+          class="text-[11px] font-medium bg-dole-blue/10 text-dole-blue-dark px-2 py-0.5 rounded"
+        >
+          {{ s }}
+        </span>
+      </div>
+
+      <!-- Region headline -->
+      <div
+        v-if="previewRegion"
+        class="mb-4 rounded-lg bg-dole-blue text-white px-4 py-3"
+      >
+        <p
+          class="text-[11px] uppercase tracking-wide text-white/60 font-semibold mb-2"
+        >
+          {{ previewRegion.scope }} — totals
+        </p>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5">
+          <div v-for="m in previewRegion.metrics" :key="m.key">
+            <p class="text-[11px] text-white/60 leading-tight">
+              {{ shortLabel(m.label) }}
+            </p>
+            <p class="text-base font-semibold tabular-nums leading-tight mt-0.5">
+              {{ fmtValue(m) }}
+            </p>
+            <p class="text-[11px] text-white/70 tabular-nums mt-0.5">
+              <template v-if="m.target !== null"
+                >of {{ fmtTarget(m) }} ·
+                <span class="font-semibold text-white">{{
+                  pctLabel(m)
+                }}</span></template
+              >
+              <template v-else>no target set</template>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-province breakdown -->
+      <p class="text-xs font-semibold text-black/50 uppercase tracking-wide mb-2">
+        By province
+      </p>
+      <div
+        v-for="p in previewProvinces"
+        :key="p.scope"
+        class="mb-2.5 last:mb-0 rounded-lg border border-black/10 overflow-hidden"
+      >
+        <div
+          class="bg-dole-blue/5 px-3 py-1.5 font-semibold text-dole-blue-dark text-sm"
+        >
+          {{ p.scope }}
+        </div>
+        <div class="divide-y divide-black/5">
+          <div
+            v-for="m in p.metrics"
+            :key="m.key"
+            class="flex items-center gap-2 px-3 py-1.5 text-sm"
+          >
+            <span class="flex-1 min-w-0 truncate text-black/70">{{
+              shortLabel(m.label)
+            }}</span>
+            <span class="w-24 text-right font-medium tabular-nums shrink-0">{{
+              fmtValue(m)
+            }}</span>
+            <span
+              class="w-24 text-right text-xs text-black/45 tabular-nums shrink-0 hidden sm:inline"
             >
-              <td class="py-1.5 font-medium">{{ entry.scope }}</td>
-              <td class="py-1.5">{{ m.label }}</td>
-              <td class="py-1.5">{{ formatMetricValue(m.unit, m.actual) }}</td>
-              <td class="py-1.5">
-                {{
-                  m.target !== null
-                    ? formatMetricValue(m.unit, m.target)
-                    : "TBD"
-                }}
-              </td>
-              <td class="py-1.5">
-                {{
-                  m.target !== null
-                    ? formatMetricValue(
-                        m.unit,
-                        balance(m.target, m.actual) ?? 0,
-                      )
-                    : "—"
-                }}
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
+              {{ m.target !== null ? "of " + fmtTarget(m) : "—" }}
+            </span>
+            <span
+              class="w-9 h-1 rounded-full bg-black/10 overflow-hidden shrink-0 hidden sm:block"
+            >
+              <span
+                class="block h-full"
+                :class="barTone(m)"
+                :style="{ width: pctWidth(m) }"
+              ></span>
+            </span>
+            <span
+              class="w-10 text-right text-xs font-semibold tabular-nums shrink-0"
+              :class="pctTone(m)"
+            >
+              {{ pctLabel(m) }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-[11px] text-black/45 mt-3">
+        Percentages are actual ÷ target. Full figures, quarterly breakdown and
+        notes are in the downloaded files.
+      </p>
 
       <template #footer>
         <button
@@ -216,12 +424,64 @@ function onProgramChange() {
           Cancel
         </button>
         <button
-          @click="confirmDownload"
+          @click="downloadExcel"
+          :disabled="xlsBuilding"
+          class="border border-dole-blue text-dole-blue text-sm px-4 py-2 rounded hover:bg-dole-blue/5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {{ xlsBuilding ? "Building…" : "Excel workbook" }}
+        </button>
+        <button
+          @click="openReportPreview"
           class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition"
         >
-          Confirm &amp; Download
+          PDF report
         </button>
       </template>
     </Modal>
+
+    <!-- The exact PDF, reviewed before it is saved to a folder -->
+    <div
+      v-if="showReportPreview"
+      class="fixed inset-0 z-50 bg-black/60 flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Report preview"
+    >
+      <div
+        class="flex items-center justify-between gap-3 bg-white px-4 py-2.5 shadow-md"
+      >
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-dole-blue truncate">
+            {{ selectedProgramName }} · {{ selectedPeriodLabel }} — Report
+          </p>
+          <p class="text-[11px] text-black/50">
+            Use the
+            <span class="font-semibold">download</span> button on the viewer
+            toolbar below to save this PDF, or
+            <span class="font-semibold">print</span> it.
+          </p>
+        </div>
+        <button
+          @click="closeReportPreview"
+          class="text-sm text-white bg-dole-blue px-4 py-1.5 rounded hover:bg-dole-blue-dark transition shrink-0"
+        >
+          Close
+        </button>
+      </div>
+      <div class="flex-1 relative bg-neutral-300">
+        <div
+          v-if="pdfBuilding"
+          class="absolute inset-0 flex items-center justify-center text-sm text-black/60"
+        >
+          Building the report…
+        </div>
+        <iframe
+          v-if="pdfPreviewUrl"
+          :src="pdfPreviewUrl"
+          title="Monitoring report preview"
+          class="absolute inset-0 w-full h-full border-0"
+        ></iframe>
+      </div>
+    </div>
   </div>
 </template>
