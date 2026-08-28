@@ -1,7 +1,7 @@
 import { ref, watch, type Ref } from "vue";
 import { getAllProgramFiles, type FileRecord } from "../data/fileStore";
 import type { PeriodEntry } from "../data/mockMonitoring";
-import type { QuarterlyActual } from "../data/uploadStore";
+import type { QuarterlyActual } from "../parsers";
 
 export interface ParsedFileData {
   periods: PeriodEntry[];
@@ -12,6 +12,7 @@ export interface ParsedFileData {
     startingBalance: number | null;
     remainingBalance: number | null;
   }[];
+  lguRates?: Record<string, { lgu: string; rate: number }[]>;
 }
 
 // A monitoring file, with its parsed_data cast into a known shape.
@@ -63,6 +64,56 @@ function buildPeriodsWithSource(files: MonitoringFile[]): PeriodWithSource[] {
     }
   }
   return [...byKey.values()];
+}
+
+export interface ShadowedPeriod {
+  scope: string;
+  label: string;
+  fileId: number;
+  fileName: string;
+  uploadedBy: string;
+}
+
+// Existing periods whose year/quarter/scope match an incoming upload's
+// parsed data — these are periods that upload's data would silently
+// overwrite on the dashboards. Shared by both upload entry points (File
+// Explorer's drag-and-drop and the dedicated Upload page) so the "safe to
+// auto-replace" rule can never drift between them.
+export function findShadowedPeriods(
+  periods: PeriodWithSource[],
+  incoming: { year: number; quarter?: string; scope: string; label: string }[],
+): ShadowedPeriod[] {
+  const conflicts: ShadowedPeriod[] = [];
+  for (const entry of incoming) {
+    const match = periods.find(
+      ({ period }) =>
+        period.year === entry.year &&
+        period.quarter === entry.quarter &&
+        period.scope === entry.scope,
+    );
+    if (match) {
+      conflicts.push({
+        scope: entry.scope,
+        label: entry.label,
+        fileId: match.file.id,
+        fileName: match.file.fileName,
+        uploadedBy: match.file.uploadedByName,
+      });
+    }
+  }
+  return conflicts;
+}
+
+// If every shadowed period traces back to the same existing file, that
+// file is unambiguously "the older version of this data" — safe to replace
+// outright. If different periods shadow different files (e.g. this upload
+// bundles data that used to live in two separate older files), there's no
+// single correct target to replace, so this returns null and callers fall
+// back to the normal warn-then-upload-as-new-file path.
+export function singleShadowedFileId(conflicts: ShadowedPeriod[]): number | null {
+  if (conflicts.length === 0) return null;
+  const ids = new Set(conflicts.map((c) => c.fileId));
+  return ids.size === 1 ? conflicts[0].fileId : null;
 }
 
 export function useProgramFiles(programId: Ref<string> | string) {
