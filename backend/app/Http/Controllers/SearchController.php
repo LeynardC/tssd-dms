@@ -19,12 +19,18 @@ class SearchController extends Controller
         $user = $request->user();
         $isChief = $user->hasRole('chief');
 
+        // LOWER(...) LIKE ? works the same on SQLite, MySQL, and PostgreSQL —
+        // ILIKE is PostgreSQL-only and errors out on the other two, which
+        // includes this project's own default local database (SQLite).
+        $needle = '%' . strtolower($query) . '%';
+
         $fileQuery = File::query()
-            ->where('original_name', 'ILIKE', "%{$query}%")
+            ->whereRaw('LOWER(original_name) LIKE ?', [$needle])
+            ->whereDoesntHave('folder', fn ($q) => $q->where('retired', true))
             ->with('uploader:id,name');
 
         $folderQuery = Folder::query()
-            ->where('name', 'ILIKE', "%{$query}%")
+            ->whereRaw('LOWER(name) LIKE ?', [$needle])
             ->where('retired', false);
 
         if (!$isChief) {
@@ -39,10 +45,10 @@ class SearchController extends Controller
         $staffResults = [];
         if ($isChief) {
             $staffResults = User::role('staff')
-                ->where(function ($q) use ($query) {
-                    $q->where('name', 'ILIKE', "%{$query}%")
-                        ->orWhere('username', 'ILIKE', "%{$query}%")
-                        ->orWhere('staff_id', 'ILIKE', "%{$query}%");
+                ->where(function ($q) use ($needle) {
+                    $q->whereRaw('LOWER(name) LIKE ?', [$needle])
+                        ->orWhereRaw('LOWER(username) LIKE ?', [$needle])
+                        ->orWhereRaw('LOWER(staff_id) LIKE ?', [$needle]);
                 })
                 ->select(['id', 'name', 'username', 'staff_id', 'unit', 'assigned_program'])
                 ->limit(25)

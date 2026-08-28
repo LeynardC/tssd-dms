@@ -12,7 +12,7 @@ class ActivityLogController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate([
-            'subject_type' => ['required', 'string', 'in:File,Folder,Staff,Category'],
+            'subject_type' => ['required', 'string', 'in:File,Folder,Staff,Program,Unit'],
             'subject_id' => ['required', 'integer'],
         ]);
 
@@ -21,12 +21,15 @@ class ActivityLogController extends Controller
         $subjectId = $validated['subject_id'];
 
         if (!$user->hasRole('chief')) {
-            if ($subjectType === 'Staff' || $subjectType === 'Category') {
+            if ($subjectType === 'Staff' || $subjectType === 'Program' || $subjectType === 'Unit') {
                 abort(403, 'You are not authorized to view this activity log.');
             }
 
             if ($subjectType === 'File') {
-                $file = File::find($subjectId);
+                // withTrashed() — a file sitting in the Recycle Bin is
+                // soft-deleted, and the default query would otherwise exclude
+                // it here, wrongly 403ing the owner viewing its activity log.
+                $file = File::withTrashed()->find($subjectId);
                 if (!$file || $file->program_id !== $user->assigned_program) {
                     abort(403, 'You can only view activity for files in your assigned program.');
                 }

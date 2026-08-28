@@ -123,8 +123,8 @@ class StaffController extends Controller
 
         $validated = $request->validate([
             'position' => ['required', 'string', 'max:255'],
-            'unit' => ['required', 'string', Rule::in(['unit_001', 'unit_002', 'unit_003'])],
-            'assigned_program' => ['required', 'string', 'max:255'],
+            'unit' => ['required', 'string', Rule::exists('units', 'code')->where(fn ($q) => $q->where('retired', false))],
+            'assigned_program' => ['required', 'string', Rule::exists('programs', 'code')->where(fn ($q) => $q->where('retired', false))],
         ]);
 
         $before = [
