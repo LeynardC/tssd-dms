@@ -4,6 +4,7 @@ import {
   searchMonitoringScopes,
   type MonitoringSearchResult,
 } from "../features/monitoring/data/mockMonitoring";
+import { hasParser } from "../features/monitoring/parsers";
 
 export interface FileSearchResult {
   id: number;
@@ -74,7 +75,13 @@ export function useGlobalSearch() {
         files: backendResults.files,
         folders: backendResults.folders,
         staff: backendResults.staff,
-        monitoring: searchMonitoringScopes(trimmed),
+        // Only surface monitoring hits for programs that actually have a
+        // parser (SPES today). The rest of searchMonitoringScopes() comes
+        // from mockMonitoring.ts scaffolding and would land the user on an
+        // empty dashboard — same rule the Monitoring Hub uses.
+        monitoring: searchMonitoringScopes(trimmed).filter((r) =>
+          hasParser(r.programId),
+        ),
       };
     } catch (err) {
       error.value =

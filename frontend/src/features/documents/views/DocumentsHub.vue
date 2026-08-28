@@ -3,12 +3,12 @@ import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { currentRole, assignedProgram } from "../../monitoring/role";
 import {
-  ensureCategoriesLoaded,
-  activeCategories,
-  categoriesLoading,
-  categoriesError,
-  UNIT_LABELS,
-} from "../../categories/data/categoryCache";
+  ensureProgramsLoaded,
+  activePrograms,
+  programsLoading,
+  programsError,
+} from "../../programs/data/programCache";
+import { ensureUnitsLoaded, unitLabels } from "../../units/data/unitCache";
 
 const router = useRouter();
 
@@ -21,14 +21,15 @@ if (currentRole.value === "staff") {
   });
 }
 
-onMounted(ensureCategoriesLoaded);
+onMounted(ensureProgramsLoaded);
+onMounted(ensureUnitsLoaded);
 
 const isChief = computed(() => currentRole.value === "chief");
 
 // Sorted by unit then name, so Unit 001's programs group together visually
 // even though the grid itself doesn't render separate unit headers (yet).
 const sortedPrograms = computed(() =>
-  [...activeCategories.value].sort(
+  [...activePrograms.value].sort(
     (a, b) => a.unit.localeCompare(b.unit) || a.name.localeCompare(b.name),
   ),
 );
@@ -49,7 +50,7 @@ const sortedPrograms = computed(() =>
       </p>
 
       <div
-        v-if="categoriesLoading"
+        v-if="programsLoading"
         class="grid gap-4 sm:grid-cols-2 animate-pulse"
       >
         <div
@@ -61,11 +62,11 @@ const sortedPrograms = computed(() =>
           <div class="h-4 w-20 bg-black/10 rounded"></div>
         </div>
       </div>
-      <p v-else-if="categoriesError" class="text-sm text-red-600">
-        {{ categoriesError }}
+      <p v-else-if="programsError" class="text-sm text-red-600">
+        {{ programsError }}
       </p>
       <p v-else-if="sortedPrograms.length === 0" class="text-sm text-black/50">
-        No active programs yet. Add one under Categories.
+        No active programs yet. Add one under Programs.
       </p>
 
       <div v-else class="grid gap-4 sm:grid-cols-2">
@@ -82,7 +83,7 @@ const sortedPrograms = computed(() =>
             {{ program.name }}
           </p>
           <p class="text-sm text-black/60 mt-1">
-            {{ UNIT_LABELS[program.unit] }}
+            {{ unitLabels[program.unit] ?? program.unit }}
           </p>
         </router-link>
       </div>

@@ -11,11 +11,21 @@ import {
   type StaffMember,
 } from "../../auth/authService";
 import {
-  ensureCategoriesLoaded,
-  UNITS,
+  ensureProgramsLoaded,
   programsByUnit,
-  categoriesLoading,
-} from "../../categories/data/categoryCache";
+  programsLoading,
+} from "../../programs/data/programCache";
+import {
+  ensureUnitsLoaded,
+  activeUnits,
+  unitLabels,
+} from "../../units/data/unitCache";
+import {
+  getPendingOAuthLinks,
+  approveOAuthLink,
+  rejectOAuthLink,
+  type OAuthAccountLink,
+} from "../../auth/data/oauthLinkService";
 import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import Modal from "../../../components/Modal.vue";
@@ -113,7 +123,81 @@ async function loadStaff() {
 }
 
 onMounted(loadStaff);
-onMounted(ensureCategoriesLoaded);
+onMounted(ensureProgramsLoaded);
+onMounted(ensureUnitsLoaded);
+
+// --- Pending Google Link Requests ---
+const pendingLinks = ref<OAuthAccountLink[]>([]);
+const loadingPendingLinks = ref(true);
+const pendingLinksError = ref("");
+const reviewingLinkId = ref<number | null>(null);
+
+async function loadPendingLinks() {
+  loadingPendingLinks.value = true;
+  pendingLinksError.value = "";
+  try {
+    pendingLinks.value = await getPendingOAuthLinks();
+  } catch (err) {
+    pendingLinksError.value =
+      err instanceof ApiError
+        ? err.message
+        : "Could not load pending Google link requests.";
+  } finally {
+    loadingPendingLinks.value = false;
+  }
+}
+
+onMounted(loadPendingLinks);
+
+async function handleApproveLink(link: OAuthAccountLink) {
+  reviewingLinkId.value = link.id;
+  try {
+    await approveOAuthLink(link.id);
+    showToast(
+      `Google account approved for ${link.user?.name ?? "this staff member"}.`,
+      "success",
+    );
+    await loadPendingLinks();
+  } catch (err) {
+    showToast(
+      err instanceof ApiError ? err.message : "Could not approve this request.",
+      "error",
+    );
+  } finally {
+    reviewingLinkId.value = null;
+  }
+}
+
+async function handleRejectLink(link: OAuthAccountLink) {
+  const ok = await confirmAction({
+    title: "Reject Google Link Request",
+    message: `Reject ${link.user?.name ?? "this"}'s request to link ${link.provider_email}?`,
+    confirmLabel: "Reject",
+    danger: true,
+  });
+  if (!ok) return;
+  reviewingLinkId.value = link.id;
+  try {
+    await rejectOAuthLink(link.id);
+    showToast("Request rejected.", "success");
+    await loadPendingLinks();
+  } catch (err) {
+    showToast(
+      err instanceof ApiError ? err.message : "Could not reject this request.",
+      "error",
+    );
+  } finally {
+    reviewingLinkId.value = null;
+  }
+}
+
+function formatRequestedDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 function programLabel(programValue: string | null): string {
   if (!programValue) return "—";
@@ -125,7 +209,8 @@ function programLabel(programValue: string | null): string {
 }
 
 function unitLabel(unitValue: string | null): string {
-  return UNITS.find((u) => u.value === unitValue)?.label ?? "—";
+  if (!unitValue) return "—";
+  return unitLabels.value[unitValue] ?? unitValue;
 }
 
 function onboardingStatus(member: StaffMember): string {
@@ -393,6 +478,71 @@ async function handleDelete(member: StaffMember) {
           </button>
         </template>
       </Modal>
+      <!-- Pending Google Link Requests -->
+      <div
+        v-if="!loadingPendingLinks && pendingLinks.length > 0"
+        class="bg-white border border-black/10 rounded-lg p-6"
+      >
+        <h2 class="font-display text-lg font-semibold text-dole-blue mb-1">
+          Pending Google Link Requests
+        </h2>
+        <p class="text-sm text-black/60 mb-4">
+          Staff who've asked to sign in with a Google account. Approve only
+          if you can confirm the account belongs to them.
+        </p>
+        <p v-if="pendingLinksError" class="text-sm text-red-600">
+          {{ pendingLinksError }}
+        </p>
+        <div v-else class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-black/50 border-b border-black/10">
+                <th class="pb-2 pr-3">Staff</th>
+                <th class="pb-2 pr-3">Google Account</th>
+                <th class="pb-2 pr-3">Requested</th>
+                <th class="pb-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="link in pendingLinks"
+                :key="link.id"
+                class="border-b border-black/5 last:border-0"
+              >
+                <td class="py-2 pr-3 font-medium">
+                  {{ link.user?.name }}
+                  <span class="text-black/50 font-normal"
+                    >({{ link.user?.username }})</span
+                  >
+                </td>
+                <td class="py-2 pr-3 text-black/70">
+                  {{ link.provider_email }}
+                </td>
+                <td class="py-2 pr-3 text-black/50">
+                  {{ formatRequestedDate(link.requested_at) }}
+                </td>
+                <td class="py-2 text-right space-x-3">
+                  <button
+                    @click="handleApproveLink(link)"
+                    :disabled="reviewingLinkId === link.id"
+                    class="text-xs text-dole-blue hover:underline disabled:opacity-50"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    @click="handleRejectLink(link)"
+                    :disabled="reviewingLinkId === link.id"
+                    class="text-xs text-dole-red hover:underline disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Staff table -->
       <div class="bg-white border border-black/10 rounded-lg p-6">
         <h2 class="font-display text-lg font-semibold text-dole-blue mb-4">
@@ -643,8 +793,8 @@ async function handleDelete(member: StaffMember) {
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue"
           >
             <option value="" disabled>Select a unit</option>
-            <option v-for="u in UNITS" :key="u.value" :value="u.value">
-              {{ u.label }}
+            <option v-for="u in activeUnits" :key="u.code" :value="u.code">
+              {{ u.name }}
             </option>
           </select>
         </div>
@@ -658,12 +808,12 @@ async function handleDelete(member: StaffMember) {
             id="edit-staff-program"
             v-model="editProgram"
             required
-            :disabled="!editUnit || categoriesLoading"
+            :disabled="!editUnit || programsLoading"
             class="w-full border border-black/20 rounded px-3 py-2 focus:outline-none focus:border-dole-blue disabled:bg-black/5"
           >
             <option value="" disabled>
               {{
-                categoriesLoading
+                programsLoading
                   ? "Loading programs..."
                   : editUnit
                     ? "Select a program"
