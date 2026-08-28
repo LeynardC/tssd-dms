@@ -1,0 +1,9 @@
+# Normalise all text files to LF in the repository, regardless of each
+# developer's core.autocrlf setting. Mirrors backend/.gitattributes so the
+# whole project behaves the same. Git still auto-detects binary files
+# (images, fonts) and leaves them untouched.
+* text=auto eol=lf
+
+*.css   diff=css
+*.html  diff=html
+*.md    diff=markdown
