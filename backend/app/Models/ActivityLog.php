@@ -50,4 +50,29 @@ class ActivityLog extends Model
             'metadata' => $metadata,
         ]);
     }
+
+    /**
+     * Sign-in / sign-out events. $user is null for a failed attempt or a
+     * lockout — actor_name then holds the identifier that was tried, capped
+     * so an oversized login field can't break the insert. IP and user agent
+     * go in metadata for security review.
+     */
+    public static function recordAuth(
+        ?\App\Models\User $user,
+        string $action,
+        string $identifier,
+        ?string $ip,
+        ?string $userAgent,
+        array $extra = []
+    ): self {
+        return static::create([
+            'actor_id' => $user?->id,
+            'actor_name' => $user?->name ?? \Illuminate\Support\Str::limit($identifier, 200, ''),
+            'action' => $action,
+            'subject_type' => 'Auth',
+            'subject_id' => $user?->id,
+            'subject_label' => \Illuminate\Support\Str::limit($identifier, 200, ''),
+            'metadata' => ['ip' => $ip, 'user_agent' => \Illuminate\Support\Str::limit((string) $userAgent, 500, '')] + $extra,
+        ]);
+    }
 }

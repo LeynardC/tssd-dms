@@ -129,9 +129,13 @@ return [
     | you may not need them when building your own application. This may be
     | especially true if you're writing a custom single-page application.
     |
+    | Off: this is a headless API for a separate Vue SPA. Fortify's Blade
+    | views (/login, /forgot-password, ...) have no templates in this project
+    | and only add dead, error-prone routes.
+    |
     */
 
-    'views' => true,
+    'views' => false,
 
     /*
     |--------------------------------------------------------------------------
