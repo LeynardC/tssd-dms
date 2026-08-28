@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import TwoFactorSettings from "../features/auth/views/TwoFactorSettings.vue";
 import PasskeySettings from "../features/auth/views/PasskeySettings.vue";
+import GoogleAccountSettings from "../features/auth/views/GoogleAccountSettings.vue";
 </script>
 
 <template>
@@ -13,6 +14,7 @@ import PasskeySettings from "../features/auth/views/PasskeySettings.vue";
     <main class="max-w-5xl mx-auto px-8 py-10 space-y-6">
       <TwoFactorSettings />
       <PasskeySettings />
+      <GoogleAccountSettings />
     </main>
   </div>
 </template>
