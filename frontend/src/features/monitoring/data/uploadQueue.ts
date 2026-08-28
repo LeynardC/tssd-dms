@@ -3,7 +3,7 @@
 // of form text. A queued upload survives a closed browser/laptop and
 // retries automatically once connectivity returns.
 
-import { uploadFileWithProgress } from "./fileStore";
+import { uploadFileWithProgress, replaceFile } from "./fileStore";
 
 const DB_NAME = "tssd-dms-upload-queue";
 const DB_VERSION = 1;
@@ -18,6 +18,10 @@ export interface QueuedUpload {
   fileBlob: Blob;
   parsedData?: unknown;
   queuedAt: string;
+  // Set when this queued item is replacing an existing file's data (not
+  // creating a new one) — flushQueue() branches on this to call replaceFile()
+  // instead of uploadFileWithProgress().
+  replaceTargetId?: number;
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -63,7 +67,8 @@ export async function queueUpload(entry: {
   folderId: number | null;
   file: File;
   parsedData?: unknown;
-}): Promise<void> {
+  replaceTargetId?: number;
+}): Promise<string> {
   const queued: QueuedUpload = {
     id: crypto.randomUUID(),
     programId: entry.programId,
@@ -72,8 +77,10 @@ export async function queueUpload(entry: {
     fileBlob: entry.file,
     parsedData: entry.parsedData,
     queuedAt: new Date().toISOString(),
+    replaceTargetId: entry.replaceTargetId,
   };
   await withStore("readwrite", (store) => store.put(queued));
+  return queued.id;
 }
 
 export async function getQueuedUploads(): Promise<QueuedUpload[]> {
@@ -103,13 +110,22 @@ export async function flushQueue(
   for (const item of pending) {
     try {
       const file = new File([item.fileBlob], item.fileName);
-      await uploadFileWithProgress(
-        item.programId,
-        item.folderId,
-        file,
-        (percent) => onProgress?.(item.id, percent),
-        item.parsedData,
-      );
+      if (item.replaceTargetId != null) {
+        await replaceFile(
+          item.replaceTargetId,
+          file,
+          (percent) => onProgress?.(item.id, percent),
+          item.parsedData,
+        );
+      } else {
+        await uploadFileWithProgress(
+          item.programId,
+          item.folderId,
+          file,
+          (percent) => onProgress?.(item.id, percent),
+          item.parsedData,
+        );
+      }
       await removeQueuedUpload(item.id);
       succeeded++;
     } catch {

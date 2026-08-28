@@ -68,26 +68,20 @@ export async function uploadFile(
   return result.file;
 }
 
-export function uploadFileWithProgress(
-  programId: string,
-  folderId: number | null,
-  file: File,
+// Shared XHR plumbing for both "create a new file" and "replace an existing
+// file" — the only differences between the two are the URL and which fields
+// go into the FormData, both handled by the caller. Kept as XHR (not
+// fetch()) specifically because fetch can't report upload progress.
+async function xhrUploadWithProgress(
+  path: string,
+  formData: FormData,
   onProgress: (percent: number) => void,
-  parsedData?: unknown,
 ): Promise<FileRecord> {
-  return new Promise(async (resolve, reject) => {
-    const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
-    const formData = new FormData();
-    formData.append("program_id", programId);
-    if (folderId !== null) formData.append("folder_id", String(folderId));
-    formData.append("file", file);
-    if (parsedData !== undefined) {
-      formData.append("parsed_data", JSON.stringify(parsedData));
-    }
-
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  return new Promise((resolve, reject) => {
     const base = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${base}/api/files`, true);
+    xhr.open("POST", `${base}${path}`, true);
     xhr.withCredentials = true;
     xhr.setRequestHeader("Accept", "application/json");
     xhr.setRequestHeader("X-XSRF-TOKEN", xsrf);
@@ -118,6 +112,37 @@ export function uploadFileWithProgress(
 
     xhr.send(formData);
   });
+}
+
+export function uploadFileWithProgress(
+  programId: string,
+  folderId: number | null,
+  file: File,
+  onProgress: (percent: number) => void,
+  parsedData?: unknown,
+): Promise<FileRecord> {
+  const formData = new FormData();
+  formData.append("program_id", programId);
+  if (folderId !== null) formData.append("folder_id", String(folderId));
+  formData.append("file", file);
+  if (parsedData !== undefined) {
+    formData.append("parsed_data", JSON.stringify(parsedData));
+  }
+  return xhrUploadWithProgress("/api/files", formData, onProgress);
+}
+
+export function replaceFile(
+  fileId: number,
+  file: File,
+  onProgress: (percent: number) => void,
+  parsedData?: unknown,
+): Promise<FileRecord> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (parsedData !== undefined) {
+    formData.append("parsed_data", JSON.stringify(parsedData));
+  }
+  return xhrUploadWithProgress(`/api/files/${fileId}/replace`, formData, onProgress);
 }
 
 export function getDownloadUrl(fileId: number): string {

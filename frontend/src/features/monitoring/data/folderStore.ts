@@ -106,7 +106,7 @@ export async function renameFolder(
   return result.folder;
 }
 
-// Soft-delete only — matches the Categories retire/rename pattern, same
+// Soft-delete only — matches the Programs retire/rename pattern, same
 // decision made when this file was first designed.
 export async function retireFolder(
   programId: string,
