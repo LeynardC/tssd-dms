@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, nextTick } from "vue";
 
-defineProps<{ title: string }>();
+const props = withDefaults(
+  defineProps<{ title: string; closeOnBackdrop?: boolean }>(),
+  { closeOnBackdrop: true },
+);
 const emit = defineEmits<{ close: [] }>();
+
+function onBackdrop() {
+  if (props.closeOnBackdrop) emit("close");
+}
 
 const dialogRef = ref<HTMLElement | null>(null);
 let previouslyFocused: HTMLElement | null = null;
@@ -55,7 +62,7 @@ onUnmounted(() => {
 <template>
   <div
     class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-    @click.self="emit('close')"
+    @click.self="onBackdrop"
   >
     <div
       ref="dialogRef"
@@ -75,6 +82,8 @@ onUnmounted(() => {
           {{ title }}
         </h2>
         <button
+          type="button"
+          aria-label="Close dialog"
           @click="emit('close')"
           class="text-black/60 hover:text-black/70 text-xl leading-none"
         >

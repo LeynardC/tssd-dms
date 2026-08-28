@@ -21,11 +21,26 @@ export function canManageFolders(programId: string): boolean {
 
 // --- Read ---
 
+// In-flight de-duplication only — NOT a time-based cache. Within one tick a
+// single navigation can ask for this program's folders several times
+// (the explorer's loadAll, the breadcrumb trail, a child-folder lookup);
+// this collapses those into one request. Once the request settles the entry
+// is dropped, so the very next call re-fetches — folder data stays fresh,
+// which matters now that the explorer re-pulls on window focus.
+const foldersInFlight = new Map<string, Promise<FolderRecord[]>>();
+
 export async function getFolders(programId: string): Promise<FolderRecord[]> {
-  const result = await apiFetch<{ folders: FolderRecord[] }>(
+  const pending = foldersInFlight.get(programId);
+  if (pending) return pending;
+
+  const request = apiFetch<{ folders: FolderRecord[] }>(
     `/api/folders?program_id=${encodeURIComponent(programId)}`,
-  );
-  return result.folders;
+  )
+    .then((result) => result.folders)
+    .finally(() => foldersInFlight.delete(programId));
+
+  foldersInFlight.set(programId, request);
+  return request;
 }
 
 export async function getChildFolders(

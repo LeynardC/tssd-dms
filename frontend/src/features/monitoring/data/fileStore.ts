@@ -9,7 +9,7 @@ export interface FileRecord {
   original_name: string;
   mime_type: string;
   size_bytes: number;
-  uploaded_by: number;
+  uploaded_by: number | null;
   description: string | null;
   locked: boolean;
   parsed_data: Record<string, unknown> | null;

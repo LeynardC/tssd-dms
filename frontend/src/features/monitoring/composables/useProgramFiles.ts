@@ -123,10 +123,15 @@ export function useProgramFiles(programId: Ref<string> | string) {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  async function refresh() {
+  // `background: true` re-pulls without touching `loading` or `error` — for
+  // the on-focus refresh, where flashing a skeleton or replacing still-valid
+  // data with an error banner is worse than quietly keeping what's shown.
+  async function refresh({ background = false }: { background?: boolean } = {}) {
     const id = typeof programId === "string" ? programId : programId.value;
-    loading.value = true;
-    error.value = null;
+    if (!background) {
+      loading.value = true;
+      error.value = null;
+    }
     try {
       const all = await getAllProgramFiles(id);
       allFiles.value = all;
@@ -136,15 +141,17 @@ export function useProgramFiles(programId: Ref<string> | string) {
       files.value = monitoring;
       periods.value = buildPeriodsWithSource(monitoring);
     } catch (e) {
-      error.value =
-        "Could not load monitoring data. Check your connection and try again.";
+      if (!background) {
+        error.value =
+          "Could not load monitoring data. Check your connection and try again.";
+      }
     } finally {
-      loading.value = false;
+      if (!background) loading.value = false;
     }
   }
 
   if (typeof programId !== "string") {
-    watch(programId, refresh);
+    watch(programId, () => refresh());
   }
 
   refresh();
