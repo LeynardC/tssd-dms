@@ -9,7 +9,9 @@
         "php": "^8.3",
         "laravel/fortify": "^1.37",
         "laravel/framework": "^13.8",
+        "laravel/passkeys": "^0.2.1",
         "laravel/sanctum": "^4.3",
+        "laravel/socialite": "^5.30",
         "laravel/tinker": "^3.0",
         "spatie/laravel-permission": "^8.3"
     },
