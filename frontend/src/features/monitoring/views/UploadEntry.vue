@@ -8,12 +8,21 @@ import {
   parseWorkbookForProgram,
   type ParseResult,
 } from "../parsers";
-import { uploadFileWithProgress } from "../data/fileStore";
+import { uploadFileWithProgress, replaceFile } from "../data/fileStore";
+import {
+  queueUpload,
+  removeQueuedUpload,
+} from "../data/uploadQueue";
 import { getFolders } from "../data/folderStore";
 import { currentRole } from "../role";
 import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
-import { useProgramFiles } from "../composables/useProgramFiles";
+import {
+  useProgramFiles,
+  findShadowedPeriods,
+  singleShadowedFileId,
+  type ShadowedPeriod,
+} from "../composables/useProgramFiles";
 import FolderPickerModal from "../components/FolderPickerModal.vue";
 import { Folder } from "@lucide/vue";
 
@@ -74,34 +83,18 @@ function handleFolderSelected(folderId: number | null) {
   }
 }
 
-interface ShadowWarning {
-  scope: string;
-  label: string;
-  previousFileName: string;
-  previousUploadedBy: string;
-}
+const shadowWarnings = computed<ShadowedPeriod[]>(() =>
+  result.value
+    ? findShadowedPeriods(existingPeriods.value, result.value.periods)
+    : [],
+);
 
-const shadowWarnings = computed<ShadowWarning[]>(() => {
-  if (!result.value) return [];
-  const warnings: ShadowWarning[] = [];
-  for (const entry of result.value.periods) {
-    const match = existingPeriods.value.find(
-      ({ period }) =>
-        period.year === entry.year &&
-        period.quarter === entry.quarter &&
-        period.scope === entry.scope,
-    );
-    if (match) {
-      warnings.push({
-        scope: entry.scope,
-        label: entry.label,
-        previousFileName: match.file.fileName,
-        previousUploadedBy: match.file.uploadedByName,
-      });
-    }
-  }
-  return warnings;
-});
+// If every shadowed period traces back to the same existing file, that file
+// is unambiguously "the older version of this data" — safe to replace
+// outright instead of piling up a separate, disconnected new file.
+const replaceTargetId = computed<number | null>(() =>
+  singleShadowedFileId(shadowWarnings.value),
+);
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -146,29 +139,83 @@ async function handleConfirmSave() {
   saving.value = true;
   saveError.value = null;
   uploadProgress.value = 0;
+  const parsedData = {
+    periods: result.value.periods,
+    warnings: result.value.warnings,
+    quarterly: result.value.quarterly,
+    unutilizedFunds: result.value.unutilizedFunds,
+    lguRates: result.value.lguRates,
+  };
+  // Queued BEFORE attempting the network call, the same way File Explorer's
+  // upload flow now does — this is IndexedDB-backed and survives a closed
+  // browser or power loss, so a crash mid-save doesn't lose the file with no
+  // trace. A normal successful save removes it again immediately below.
+  const queuedId = await queueUpload({
+    programId: props.programId,
+    folderId: selectedFolderId.value,
+    file: selectedFile.value,
+    parsedData,
+    replaceTargetId: replaceTargetId.value ?? undefined,
+  });
   try {
-    await uploadFileWithProgress(
-      props.programId,
-      selectedFolderId.value,
-      selectedFile.value,
-      (percent) => {
-        uploadProgress.value = percent;
-      },
-      {
-        periods: result.value.periods,
-        warnings: result.value.warnings,
-        quarterly: result.value.quarterly,
-        unutilizedFunds: result.value.unutilizedFunds,
-      },
-    );
-    showToast(`"${selectedFile.value.name}" uploaded successfully`, "success");
+    if (replaceTargetId.value !== null) {
+      // This file's data unambiguously belongs to the same period/scope as
+      // an existing file — update that file in place (logged as a new
+      // version) instead of leaving the old one behind as clutter.
+      await replaceFile(
+        replaceTargetId.value,
+        selectedFile.value,
+        (percent) => {
+          uploadProgress.value = percent;
+        },
+        parsedData,
+      );
+      showToast(
+        `"${selectedFile.value.name}" replaced the existing file for this period.`,
+        "success",
+      );
+    } else {
+      await uploadFileWithProgress(
+        props.programId,
+        selectedFolderId.value,
+        selectedFile.value,
+        (percent) => {
+          uploadProgress.value = percent;
+        },
+        parsedData,
+      );
+      showToast(`"${selectedFile.value.name}" uploaded successfully`, "success");
+    }
+    await removeQueuedUpload(queuedId);
     router.push({
       name: "program-periods",
       params: { programId: props.programId },
     });
   } catch (e) {
-    saveError.value =
-      "Could not save this file. Check your connection and try again.";
+    const isNetworkError =
+      e instanceof TypeError || (e as any)?.status === undefined;
+    if (isNetworkError) {
+      // Leave it queued — File Explorer's "N waiting to upload" indicator
+      // will pick it up and retry automatically once back online, whether
+      // this was a create or a replace.
+      showToast(
+        `"${selectedFile.value.name}" saved — connection issue. Will retry automatically.`,
+        "success",
+      );
+      router.push({
+        name: "program-periods",
+        params: { programId: props.programId },
+      });
+    } else {
+      // A real, permanent failure (locked file, validation, etc.) — retrying
+      // won't help, so don't leave it silently stuck in the queue, and stay
+      // on this page so the user can see exactly what went wrong.
+      await removeQueuedUpload(queuedId);
+      saveError.value =
+        e instanceof Error
+          ? e.message
+          : "Could not save this file. Check your connection and try again.";
+    }
   } finally {
     saving.value = false;
   }
@@ -258,13 +305,17 @@ async function handleConfirmSave() {
           class="bg-dole-red/10 border border-dole-red/30 rounded p-3 mb-4"
         >
           <p class="text-sm font-medium text-dole-red mb-1">
-            This will replace existing dashboard data:
+            {{
+              replaceTargetId !== null
+                ? `This will replace "${shadowWarnings[0].fileName}" — saving here updates that file instead of creating a new one:`
+                : "This will replace existing dashboard data for:"
+            }}
           </p>
           <ul class="text-sm text-dole-red/90 list-disc pl-5">
             <li v-for="(w, i) in shadowWarnings" :key="i">
               {{ w.scope }} ({{ w.label }}) — currently from "{{
-                w.previousFileName
-              }}", uploaded by {{ w.previousUploadedBy }}
+                w.fileName
+              }}", uploaded by {{ w.uploadedBy }}
             </li>
           </ul>
         </div>
@@ -296,7 +347,13 @@ async function handleConfirmSave() {
           :disabled="saving"
           class="mt-4 bg-dole-blue text-white px-4 py-2 rounded hover:bg-dole-blue-dark transition disabled:opacity-50"
         >
-          {{ saving ? `Saving… ${uploadProgress}%` : "Confirm & Save" }}
+          {{
+            saving
+              ? `Saving… ${uploadProgress}%`
+              : replaceTargetId !== null
+                ? "Replace File & Save"
+                : "Confirm & Save"
+          }}
         </button>
         <p v-if="saveError" class="text-dole-red text-sm mt-3">
           {{ saveError }}

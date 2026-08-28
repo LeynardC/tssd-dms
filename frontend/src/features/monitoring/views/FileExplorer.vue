@@ -4,10 +4,10 @@ import { useRouter } from "vue-router";
 import * as XLSX from "xlsx";
 import { hasParser, parseWorkbookForProgram } from "../parsers";
 import {
-  ensureCategoriesLoaded,
-  activeCategories,
-  categoriesLoading,
-} from "../../categories/data/categoryCache";
+  ensureProgramsLoaded,
+  activePrograms,
+  programsLoading,
+} from "../../programs/data/programCache";
 import {
   getFolders,
   createFolder,
@@ -19,6 +19,7 @@ import {
 import {
   getFiles,
   uploadFileWithProgress,
+  replaceFile,
   renameFile,
   moveFile,
   toggleFileLock,
@@ -30,6 +31,7 @@ import {
 import {
   queueUpload,
   getQueuedUploads,
+  removeQueuedUpload,
   flushQueue,
   isQueueGettingLarge,
 } from "../data/uploadQueue";
@@ -41,6 +43,7 @@ import {
 } from "../data/activityLogStore";
 import PreviewModal from "../components/PreviewModal.vue";
 import { useFloatingMenu } from "../../../composables/useFloatingMenu";
+import { Trash2 } from "@lucide/vue";
 
 import { useConfirm } from "../../../composables/useConfirm";
 import { usePrompt } from "../../../composables/usePrompt";
@@ -49,7 +52,12 @@ import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
 import Modal from "../../../components/Modal.vue";
 import ExplorerItem from "../components/ExplorerItem.vue";
 import ExplorerMenu from "../components/ExplorerMenu.vue";
-import { useProgramFiles } from "../composables/useProgramFiles";
+import {
+  useProgramFiles,
+  findShadowedPeriods,
+  singleShadowedFileId,
+} from "../composables/useProgramFiles";
+import { formatCurrency } from "../../../utils/format";
 
 const props = defineProps<{
   programId: string;
@@ -66,14 +74,15 @@ const normalizedFolderPath = computed<string[]>(() => {
 });
 const router = useRouter();
 const program = computed(() =>
-  activeCategories.value.find((c) => c.code === props.programId),
+  activePrograms.value.find((p) => p.code === props.programId),
 );
 const { confirmAction } = useConfirm();
 const { promptAction } = usePrompt();
 const { showToast } = useToast();
 
 const canManage = computed(() => canManageFolders(props.programId));
-const { periods: existingPeriods } = useProgramFiles(props.programId);
+const { periods: existingPeriods, refresh: refreshExistingPeriods } =
+  useProgramFiles(props.programId);
 const LAYOUT_STORAGE_KEY = "tssd-file-explorer-layout";
 
 // --- Kebab menu state (shared floating-menu logic — see useFloatingMenu.ts) ---
@@ -82,12 +91,17 @@ interface MenuTarget {
   folder?: FolderRecord;
   file?: FileRecord;
 }
+// ExplorerMenu can render up to 9 rows for a file (Preview, View Data,
+// Download, Rename, Make a Copy, Move, File Information, Lock, Delete) plus
+// a divider — the default 260px estimate undershoots that even with the
+// menu's compact row sizing, and let the menu open downward with no room
+// left, clipping "Delete" off the bottom of the viewport.
 const {
   openTarget: openMenu,
   position: menuPosition,
   openMenu: showMenu,
   closeMenu,
-} = useFloatingMenu<MenuTarget>();
+} = useFloatingMenu<MenuTarget>({ menuHeightEstimate: 320 });
 
 // --- Navigation: current folder + breadcrumb trail, derived from the URL ---
 const folderIds = computed<number[]>(() =>
@@ -164,7 +178,7 @@ async function loadAll() {
 }
 
 onMounted(loadAll);
-onMounted(ensureCategoriesLoaded);
+onMounted(ensureProgramsLoaded);
 watch(() => props.folderPath, loadAll);
 watch(() => props.folderPath, closeMenu);
 
@@ -287,56 +301,118 @@ async function tryParseXlsx(file: File): Promise<unknown | undefined> {
       warnings: result.warnings,
       quarterly: result.quarterly,
       unutilizedFunds: result.unutilizedFunds,
+      lguRates: result.lguRates,
     };
   } catch {
     return undefined;
   }
 }
 
-function findShadowedPeriods(parsedData: {
-  periods: { year: number; quarter?: string; scope: string; label: string }[];
-}): { scope: string; label: string; fileName: string; uploadedBy: string }[] {
-  const conflicts: {
-    scope: string;
-    label: string;
-    fileName: string;
-    uploadedBy: string;
-  }[] = [];
-  for (const entry of parsedData.periods) {
-    const match = existingPeriods.value.find(
-      ({ period }) =>
-        period.year === entry.year &&
-        period.quarter === entry.quarter &&
-        period.scope === entry.scope,
-    );
-    if (match) {
-      conflicts.push({
-        scope: entry.scope,
-        label: entry.label,
-        fileName: match.file.fileName,
-        uploadedBy: match.file.uploadedByName,
-      });
-    }
-  }
-  return conflicts;
+// --- Duplicate-name choice (Replace / Keep Both) ---
+// Duplicate detection reuses the folder's already-loaded `files.value`
+// instead of a separate backend round-trip, since it's already scoped to
+// this program_id + folder_id. The same list is used to compute the next
+// "(n)" suffix for Keep Both, client-side — this can race with another
+// user uploading the same name at the same instant, but that's an
+// acceptable tradeoff for avoiding an extra check request on every upload.
+const duplicatePrompt = ref<{ file: File; existing: FileRecord } | null>(
+  null,
+);
+let duplicateResolve: ((choice: "replace" | "keep-both" | null) => void) | null =
+  null;
+
+function askDuplicateChoice(
+  file: File,
+  existing: FileRecord,
+): Promise<"replace" | "keep-both" | null> {
+  duplicatePrompt.value = { file, existing };
+  return new Promise((resolve) => {
+    duplicateResolve = resolve;
+  });
 }
+
+function resolveDuplicatePrompt(choice: "replace" | "keep-both" | null) {
+  duplicatePrompt.value = null;
+  duplicateResolve?.(choice);
+  duplicateResolve = null;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nextAvailableName(originalName: string, existingNames: string[]): string {
+  const dotIndex = originalName.lastIndexOf(".");
+  const base = dotIndex > 0 ? originalName.slice(0, dotIndex) : originalName;
+  const ext = dotIndex > 0 ? originalName.slice(dotIndex) : "";
+
+  const pattern = new RegExp(
+    `^${escapeRegExp(base)}\\((\\d+)\\)${escapeRegExp(ext)}$`,
+  );
+  let maxSuffix = 0;
+  for (const name of existingNames) {
+    const match = name.match(pattern);
+    if (match) maxSuffix = Math.max(maxSuffix, parseInt(match[1], 10));
+  }
+  return `${base}(${maxSuffix + 1})${ext}`;
+}
+
 async function processUpload(file: File) {
+  // Guards the whole flow, not just the network step below — otherwise a
+  // second drop/pick landing while an earlier one is still waiting on its
+  // parse/confirm dialog isn't blocked yet, and the two can race each other.
+  if (uploading.value) return;
+  uploading.value = true;
+  try {
+    await processUploadInner(file);
+  } finally {
+    uploading.value = false;
+  }
+}
+
+async function processUploadInner(file: File) {
   const parsedData = await tryParseXlsx(file);
 
+  // Set once we know for certain which existing file this upload's data
+  // should replace — carries through to the upload step below, same as the
+  // name-based duplicate-choice path already does.
+  let replaceTargetId: number | null = null;
+
   if (parsedData) {
-    const conflicts = findShadowedPeriods(parsedData as { periods: any[] });
+    const conflicts = findShadowedPeriods(
+      existingPeriods.value,
+      (parsedData as { periods: any[] }).periods,
+    );
     if (conflicts.length > 0) {
-      const ok = await confirmAction({
-        title: "Overwrite Existing Data?",
-        message: "This will replace existing dashboard data for:",
-        items: conflicts.map(
-          (c) =>
-            `${c.scope} (${c.label}) — currently from "${c.fileName}", uploaded by ${c.uploadedBy}`,
-        ),
-        confirmLabel: "Upload Anyway",
-        danger: true,
-      });
-      if (!ok) return;
+      // Offline uploads go through the local queue, which only knows how to
+      // create new files — replacing an existing one isn't queueable, so
+      // treat this as the ambiguous case while offline.
+      const singleFileId = navigator.onLine
+        ? singleShadowedFileId(conflicts)
+        : null;
+
+      if (singleFileId !== null) {
+        const ok = await confirmAction({
+          title: "Update Existing File?",
+          message: `This data matches "${conflicts[0].fileName}". Uploading will replace it with your new file and log this as an update, instead of creating a separate file.`,
+          confirmLabel: "Replace File",
+          danger: true,
+        });
+        if (!ok) return;
+        replaceTargetId = singleFileId;
+      } else {
+        const ok = await confirmAction({
+          title: "Overwrite Existing Data?",
+          message: "This will replace existing dashboard data for:",
+          items: conflicts.map(
+            (c) =>
+              `${c.scope} (${c.label}) — currently from "${c.fileName}", uploaded by ${c.uploadedBy}`,
+          ),
+          confirmLabel: "Upload Anyway",
+          danger: true,
+        });
+        if (!ok) return;
+      }
     }
   }
 
@@ -361,43 +437,100 @@ async function processUpload(file: File) {
     return;
   }
 
-  uploading.value = true;
+  let uploadTarget = file;
+
+  // Only fall back to the filename-based duplicate check if the data-based
+  // check above didn't already settle on a specific file to replace.
+  if (replaceTargetId === null) {
+    const duplicate = files.value.find((f) => f.original_name === file.name);
+    if (duplicate) {
+      const choice = await askDuplicateChoice(file, duplicate);
+      if (!choice) return;
+      if (choice === "replace") {
+        replaceTargetId = duplicate.id;
+      } else {
+        const newName = nextAvailableName(
+          file.name,
+          files.value.map((f) => f.original_name),
+        );
+        uploadTarget = new File([file], newName, { type: file.type });
+      }
+    }
+  }
+
   uploadProgress.value = 0;
+  // Queued BEFORE attempting the network call, not just after a failure —
+  // the queue is IndexedDB-backed and survives a closed browser or power
+  // loss, so if the app never gets to run the catch block below at all
+  // (crash, forced shutdown, laptop battery dying mid-upload), the file's
+  // bytes are already safely saved here instead of vanishing with no trace.
+  // A normal successful upload removes it again immediately below, so nothing
+  // changes for the common case except a moment's extra I/O.
+  const queuedId = await queueUpload({
+    programId: props.programId,
+    folderId: currentFolderId.value,
+    file: uploadTarget,
+    parsedData,
+    replaceTargetId: replaceTargetId ?? undefined,
+  });
   try {
-    await uploadFileWithProgress(
-      props.programId,
-      currentFolderId.value,
-      file,
-      (percent) => {
-        uploadProgress.value = percent;
-      },
-      parsedData,
-    );
-    showToast(`"${file.name}" uploaded.`, "success");
-    await loadAll();
+    if (replaceTargetId !== null) {
+      await replaceFile(
+        replaceTargetId,
+        uploadTarget,
+        (percent) => {
+          uploadProgress.value = percent;
+        },
+        parsedData,
+      );
+      showToast(`"${uploadTarget.name}" replaced.`, "success");
+    } else {
+      await uploadFileWithProgress(
+        props.programId,
+        currentFolderId.value,
+        uploadTarget,
+        (percent) => {
+          uploadProgress.value = percent;
+        },
+        parsedData,
+      );
+      showToast(`"${uploadTarget.name}" uploaded.`, "success");
+    }
+    await removeQueuedUpload(queuedId);
+    // Independent endpoints, run together instead of back-to-back.
+    // refreshExistingPeriods() keeps the shadow-detection data current
+    // within this same page visit — without it, a second upload right
+    // after the first would compare against stale monitoring data and
+    // never notice the file it just created, exactly the bug this call
+    // fixes.
+    await Promise.all([loadAll(), refreshExistingPeriods()]);
   } catch (err) {
     const isNetworkError =
       err instanceof TypeError || (err as any)?.status === undefined;
     if (isNetworkError) {
-      await queueUpload({
-        programId: props.programId,
-        folderId: currentFolderId.value,
-        file,
-        parsedData,
-      });
-      await refreshQueuedCount();
+      // Leave it queued — a dropped connection (same as a crash that never
+      // reaches this catch at all) is exactly what the queue exists for.
+      // tryFlushQueue() retries automatically on the next mount or 'online'
+      // event, whether this was a create or a replace.
       showToast(
-        `"${file.name}" saved — connection issue. Will retry automatically.`,
+        `"${uploadTarget.name}" saved — connection issue. Will retry automatically.`,
         "success",
       );
     } else {
+      // A real, permanent failure (locked file, validation, etc.) — retrying
+      // won't help, so don't leave it silently stuck in the queue forever.
+      await removeQueuedUpload(queuedId);
       showToast(
-        err instanceof Error ? err.message : "Upload failed. Please try again.",
+        err instanceof Error
+          ? err.message
+          : replaceTargetId !== null
+            ? "Replace failed. Please try again."
+            : "Upload failed. Please try again.",
         "error",
       );
     }
   } finally {
-    uploading.value = false;
+    await refreshQueuedCount();
   }
 }
 
@@ -474,15 +607,15 @@ async function handleFolderDelete() {
   closeMenu();
   if (!folder) return;
   const ok = await confirmAction({
-    title: "Retire Folder",
-    message: `Retire "${folder.name}"? It will be hidden from the explorer.`,
-    confirmLabel: "Retire",
+    title: "Move to Recycle Bin",
+    message: `Move "${folder.name}" to the Recycle Bin? It'll be hidden from the explorer and permanently deleted after 30 days unless restored.`,
+    confirmLabel: "Move to Recycle Bin",
     danger: true,
   });
   if (!ok) return;
   try {
     await retireFolder(props.programId, folder.id);
-    showToast("Folder retired.", "success");
+    showToast("Folder moved to Recycle Bin.", "success");
     await loadAll();
   } catch (err) {
     showToast(
@@ -543,15 +676,15 @@ async function handleFileDelete() {
   closeMenu();
   if (!file) return;
   const ok = await confirmAction({
-    title: "Delete File",
-    message: `Permanently delete "${file.original_name}"? This cannot be undone.`,
-    confirmLabel: "Delete",
+    title: "Move to Recycle Bin",
+    message: `Move "${file.original_name}" to the Recycle Bin? It'll be permanently deleted after 30 days unless restored.`,
+    confirmLabel: "Move to Recycle Bin",
     danger: true,
   });
   if (!ok) return;
   try {
     await deleteFile(file.id);
-    showToast("File deleted.", "success");
+    showToast("File moved to Recycle Bin.", "success");
     await loadAll();
   } catch (err) {
     showToast(
@@ -675,6 +808,22 @@ function hasParsedData(file: FileRecord): boolean {
   return !!file.parsed_data && Array.isArray((file.parsed_data as any).periods);
 }
 
+// #region Fund Allocation
+interface UnutilizedFundEntry {
+  lgu: string;
+  startingBalance: number | null;
+  remainingBalance: number | null;
+}
+
+function getUnutilizedFunds(
+  file: FileRecord | undefined,
+): UnutilizedFundEntry[] {
+  if (!file?.parsed_data) return [];
+  const data = file.parsed_data as any;
+  return Array.isArray(data.unutilizedFunds) ? data.unutilizedFunds : [];
+}
+// #endregion
+
 function handleViewData() {
   const file = openMenu.value?.file;
   closeMenu();
@@ -688,7 +837,7 @@ function handleViewData() {
 
 <template>
   <div
-    v-if="categoriesLoading"
+    v-if="programsLoading"
     class="min-h-screen bg-paper flex items-center justify-center"
   >
     <div class="flex flex-col items-center gap-3 text-black/60">
@@ -773,6 +922,13 @@ function handleViewData() {
               Grid
             </button>
           </div>
+          <router-link
+            :to="{ name: 'recycle-bin', params: { programId: props.programId } }"
+            class="inline-flex items-center gap-1.5 border border-black/10 text-black/60 text-sm px-3 py-1.5 rounded hover:bg-black/5 hover:text-black transition"
+          >
+            <Trash2 :size="15" />
+            Recycle Bin
+          </router-link>
           <template v-if="canManage">
             <button
               @click="handleNewFolder"
@@ -939,6 +1095,39 @@ function handleViewData() {
       </template>
     </Modal>
 
+    <!-- Duplicate-name choice modal -->
+    <Modal
+      v-if="duplicatePrompt"
+      title="File Already Exists"
+      @close="resolveDuplicatePrompt(null)"
+    >
+      <p class="text-sm text-black/70">
+        "{{ duplicatePrompt.file.name }}" already exists in this folder{{
+          duplicatePrompt.existing.locked ? " and is locked" : ""
+        }}. Replace it, or keep both files?
+      </p>
+      <template #footer>
+        <button
+          @click="resolveDuplicatePrompt(null)"
+          class="text-sm text-black/60 px-4 py-2 hover:text-black"
+        >
+          Cancel
+        </button>
+        <button
+          @click="resolveDuplicatePrompt('keep-both')"
+          class="border border-dole-blue text-dole-blue text-sm px-4 py-2 rounded hover:bg-dole-blue/5 transition"
+        >
+          Keep Both
+        </button>
+        <button
+          @click="resolveDuplicatePrompt('replace')"
+          class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition"
+        >
+          Replace
+        </button>
+      </template>
+    </Modal>
+
     <!-- Info modal -->
     <Modal
       v-if="infoTarget"
@@ -986,6 +1175,39 @@ function handleViewData() {
         class="mt-4 pt-4 border-t border-black/10 text-xs text-black/60 space-y-1"
       >
         <p>Who Has Access — coming soon</p>
+
+        <div
+          v-if="infoTarget.file && getUnutilizedFunds(infoTarget.file).length"
+          class="pt-2 border-t border-black/10 mt-2"
+        >
+          <p class="text-black/50 mb-1">
+            Fund Reallocation (from "Takers of unutilized SPES funds")
+          </p>
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-left text-black/50 border-b border-black/10">
+                <th class="pb-1">LGU</th>
+                <th class="pb-1">Starting</th>
+                <th class="pb-1">Remaining</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="entry in getUnutilizedFunds(infoTarget.file)"
+                :key="entry.lgu"
+                class="border-b border-black/5 last:border-0"
+              >
+                <td class="py-1">{{ entry.lgu }}</td>
+                <td class="py-1">
+                  {{ formatCurrency(entry.startingBalance ?? 0) }}
+                </td>
+                <td class="py-1">
+                  {{ formatCurrency(entry.remainingBalance ?? 0) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div class="pt-2">
           <p class="text-black/50 mb-1">Activity log</p>
           <p v-if="activityLoading" class="text-black/60">Loading…</p>

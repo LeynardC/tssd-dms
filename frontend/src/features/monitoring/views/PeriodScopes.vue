@@ -9,7 +9,6 @@ import { formatCurrency } from "../../../utils/format";
 const props = defineProps<{ programId: string; periodId: string }>();
 const program = computed(() => getProgram(props.programId));
 const showOverview = ref(false);
-const showReallocation = ref(false);
 const crumbs = computed<Crumb[]>(() => [
   { label: "Monitoring", to: { name: "unit-overview" } },
   {
@@ -34,10 +33,6 @@ function matchesPeriodId(
 const matchingEntries = computed(() =>
   periods.value.filter(({ period }) => matchesPeriodId(period, props.periodId)),
 );
-
-const unutilizedFunds = computed(() => {
-  return matchingEntries.value[0]?.file.data.unutilizedFunds ?? [];
-});
 
 const AGGREGATE_SCOPE_PATTERN = /region|mimaropa|total/i;
 
@@ -75,6 +70,33 @@ const comparisonGroups = computed<MetricGroup[]>(() => {
     });
   });
   return [...groups.values()];
+});
+
+interface LguRateSummary {
+  province: string;
+  count: number;
+  min: number;
+  max: number;
+}
+
+const showRatesOverview = ref(false);
+
+const lguRatesOverview = computed<LguRateSummary[]>(() => {
+  const summaries: LguRateSummary[] = [];
+  for (const { period, file } of matchingEntries.value) {
+    if (AGGREGATE_SCOPE_PATTERN.test(period.scope)) continue;
+    const entries = file.data.lguRates?.[period.scope];
+    if (entries && entries.length) {
+      const values = entries.map((e) => e.rate);
+      summaries.push({
+        province: period.scope,
+        count: entries.length,
+        min: Math.min(...values),
+        max: Math.max(...values),
+      });
+    }
+  }
+  return summaries;
 });
 
 const scopes = computed(() => periodEntries.value.map((p) => p.scope));
@@ -140,44 +162,46 @@ const scopes = computed(() => periodEntries.value.map((p) => p.scope));
         </div>
 
         <button
-          v-if="unutilizedFunds.length"
-          @click="showReallocation = !showReallocation"
+          v-if="lguRatesOverview.length"
+          @click="showRatesOverview = !showRatesOverview"
           class="text-sm font-medium text-dole-blue flex items-center gap-1 mb-3"
         >
-          {{ showReallocation ? "▾" : "▸" }} Fund Reallocation
+          {{ showRatesOverview ? "▾" : "▸" }} Hiring Rates — All Provinces
         </button>
         <div
-          v-if="showReallocation && unutilizedFunds.length"
-          class="bg-white border border-black/10 rounded-lg p-5 mb-6"
+          v-if="showRatesOverview && lguRatesOverview.length"
+          class="bg-white border border-black/10 rounded-lg p-4 mb-6"
         >
-          <p class="text-xs text-black/60 mb-3">
-            from "Takers of unutilized SPES funds" — LGU-level, not mapped to
-            province
-          </p>
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-black/50 border-b border-black/10">
-                <th class="pb-2">LGU</th>
-                <th class="pb-2">Starting Balance</th>
-                <th class="pb-2">Remaining Balance</th>
+                <th class="pb-2">Province</th>
+                <th class="pb-2">Municipalities</th>
+                <th class="pb-2">Rate Range</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="entry in unutilizedFunds"
-                :key="entry.lgu"
+                v-for="s in lguRatesOverview"
+                :key="s.province"
                 class="border-b border-black/5 last:border-0"
               >
-                <td class="py-2">{{ entry.lgu }}</td>
+                <td class="py-2 font-medium">{{ s.province }}</td>
+                <td class="py-2">{{ s.count }}</td>
                 <td class="py-2">
-                  {{ formatCurrency(entry.startingBalance ?? 0) }}
-                </td>
-                <td class="py-2">
-                  {{ formatCurrency(entry.remainingBalance ?? 0) }}
+                  {{
+                    s.min === s.max
+                      ? formatCurrency(s.min)
+                      : formatCurrency(s.min) + "–" + formatCurrency(s.max)
+                  }}
                 </td>
               </tr>
             </tbody>
           </table>
+          <p class="text-xs text-black/50 italic mt-2">
+            Click into a province below to see the full municipality-level
+            breakdown.
+          </p>
         </div>
 
         <h2 class="font-display text-lg font-semibold text-dole-blue mb-3">

@@ -82,6 +82,25 @@ const quarterlyForScope = computed(() => {
   return uploadRecord.value?.data.quarterly?.[props.scope] ?? null;
 });
 
+const lguRatesForScope = computed(() => {
+  return uploadRecord.value?.data.lguRates?.[props.scope] ?? [];
+});
+
+const lguRateSummary = computed(() => {
+  const rates = lguRatesForScope.value;
+  if (!rates.length) return null;
+  const values = rates.map((r) => r.rate);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const rangeStr =
+    min === max
+      ? formatCurrency(min)
+      : formatCurrency(min) + "–" + formatCurrency(max);
+  return rates.length + " municipalities, " + rangeStr;
+});
+
+const showLguRates = ref(false);
+
 function quarterTrend(
   current: number,
   previous: number | null,
@@ -206,6 +225,55 @@ function formatBalance(m: Metric): string {
   return b.toLocaleString();
 }
 
+function paidCount(entry: { metrics: Metric[] }): string | null {
+  const paid = entry.metrics.find((m) => m.key === "paid");
+  return paid ? paid.actual.toLocaleString() : null;
+}
+
+function fundActual(entry: { metrics: Metric[] }): number {
+  const fund = entry.metrics.find((m) => m.key === "fund");
+  return fund ? fund.actual : 0;
+}
+
+function paidBalanceText(entry: { metrics: Metric[] }): string | null {
+  const placed = entry.metrics.find((m) => m.key === "placed");
+  const paid = entry.metrics.find((m) => m.key === "paid");
+  const fund = entry.metrics.find((m) => m.key === "fund");
+  if (!placed || !paid || !fund) return null;
+
+  const unpaidStudents = Math.max(placed.actual - paid.actual, 0);
+  const fundBalance = balance(fund.target, fund.actual);
+
+  const studentsStr = unpaidStudents.toLocaleString() + " students";
+  const fundStr = fundBalance !== null ? formatCurrency(fundBalance) : "TBD";
+  return studentsStr + " • " + fundStr;
+}
+
+function pledgeFlowData(entry: { metrics: Metric[] }): {
+  pledged: number;
+  supplemental: number;
+  totalPledged: number;
+  placed: number;
+  gap: number;
+  exceedsPledge: boolean;
+} | null {
+  const pledged = entry.metrics.find((m) => m.key === "pledged");
+  const supplemental = entry.metrics.find((m) => m.key === "supplemental");
+  const placed = entry.metrics.find((m) => m.key === "placed");
+  if (!pledged || !supplemental || !placed) return null;
+
+  const totalPledged = pledged.actual + supplemental.actual;
+  const gap = placed.actual - totalPledged;
+  return {
+    pledged: pledged.actual,
+    supplemental: supplemental.actual,
+    totalPledged,
+    placed: placed.actual,
+    gap: Math.abs(gap),
+    exceedsPledge: gap > 0,
+  };
+}
+
 function progressPct(m: Metric): number {
   if (m.target === null || m.target === 0) return 0;
   return Math.min((m.actual / m.target) * 100, 100);
@@ -293,6 +361,92 @@ function handlePrint() {
             <span class="text-sm text-black/50">{{ entry.label }}</span>
           </div>
 
+          <!--
+            Summary boxes: additive only. Every individual metric card below
+            still renders in full (target, balance, progress bar) — these two
+            boxes just add an at-a-glance reading on top, per Leynard's
+            confirmation that the original per-metric data must stay visible.
+          -->
+          <div
+            v-if="pledgeFlowData(entry)"
+            class="bg-paper border border-black/10 rounded-lg px-4 py-3 mb-4"
+          >
+            <p class="text-xs font-medium text-black/60 mb-2">
+              Pledge → Placement Flow
+            </p>
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+              <span class="font-semibold text-dole-blue">{{
+                pledgeFlowData(entry)!.pledged.toLocaleString()
+              }}</span>
+              <span class="text-black/50">pledged</span>
+              <span class="text-black/40">+</span>
+              <span class="font-semibold text-dole-blue">{{
+                pledgeFlowData(entry)!.supplemental.toLocaleString()
+              }}</span>
+              <span class="text-black/50">supplemental</span>
+              <span class="text-black/40">=</span>
+              <span class="font-semibold text-dole-blue">{{
+                pledgeFlowData(entry)!.totalPledged.toLocaleString()
+              }}</span>
+              <span class="text-black/50">total pledged</span>
+            </div>
+            <div
+              class="flex items-baseline gap-2 text-sm mt-2 pt-2 border-t border-black/5"
+            >
+              <span class="font-semibold text-dole-blue">{{
+                pledgeFlowData(entry)!.placed.toLocaleString()
+              }}</span>
+              <span class="text-black/50">actually placed</span>
+              <span
+                v-if="pledgeFlowData(entry)!.gap > 0"
+                :class="
+                  pledgeFlowData(entry)!.exceedsPledge
+                    ? 'text-dole-red'
+                    : 'text-black/60'
+                "
+                class="text-xs font-medium"
+              >
+                ({{ pledgeFlowData(entry)!.exceedsPledge ? "+" : "−"
+                }}{{ pledgeFlowData(entry)!.gap.toLocaleString() }}
+                {{
+                  pledgeFlowData(entry)!.exceedsPledge
+                    ? "more than pledged"
+                    : "fewer than pledged"
+                }})
+              </span>
+            </div>
+            <p
+              v-if="pledgeFlowData(entry)!.gap > 0"
+              class="text-xs text-black/50 italic mt-2 pt-2 border-t border-black/5"
+            >
+              Gaps commonly reflect multiple placement batches logged for the
+              same LGU/employer across the year — not necessarily a data error.
+              Worth a quick check with the source records only if the size of
+              the gap looks unusual.
+            </p>
+          </div>
+
+          <div
+            v-if="paidCount(entry)"
+            class="bg-dole-blue/5 border border-dole-blue/20 rounded-lg px-4 py-3 mb-4"
+          >
+            <p class="text-xs font-medium text-black/60 mb-1">
+              Beneficiaries Paid & Amount Disbursed
+            </p>
+            <p class="text-lg font-semibold text-dole-blue">
+              {{ paidCount(entry) }} students
+              <span class="text-black/40 mx-1">•</span>
+              {{ formatCurrency(fundActual(entry)) }} disbursed
+            </p>
+            <p
+              v-if="paidBalanceText(entry)"
+              class="text-xs text-black/60 mt-2 pt-2 border-t border-dole-blue/10"
+            >
+              Remaining unpaid: {{ paidBalanceText(entry) }}
+            </p>
+          </div>
+
+          <!-- All original individual metric cards — unchanged, all shown -->
           <div class="grid grid-cols-2 gap-x-6 gap-y-4 mb-4">
             <div v-for="m in entry.metrics" :key="m.key">
               <div
@@ -418,6 +572,43 @@ function handlePrint() {
             <p v-if="showQuarterly" class="text-xs text-black/60 italic mt-2">
               Derived from actual payment dates. Cumulative % is vs. the annual
               target — no quarterly target exists in the source file.
+            </p>
+          </div>
+
+          <div
+            v-if="lguRatesForScope.length"
+            class="border-t border-black/5 pt-3 mb-3"
+          >
+            <button
+              @click="showLguRates = !showLguRates"
+              class="text-xs font-medium text-dole-blue flex items-center gap-1"
+            >
+              {{ showLguRates ? "▾" : "▸" }} Municipality-Level Hiring Rates
+              <span v-if="lguRateSummary" class="text-black/50 font-normal ml-1"
+                >({{ lguRateSummary }})</span
+              >
+            </button>
+            <table v-if="showLguRates" class="w-full text-xs mt-3">
+              <thead>
+                <tr class="text-left text-black/50 border-b border-black/10">
+                  <th class="pb-1.5">LGU / Municipality</th>
+                  <th class="pb-1.5">Daily Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="lgu in lguRatesForScope"
+                  :key="lgu.lgu"
+                  class="border-b border-black/5 last:border-0"
+                >
+                  <td class="py-1.5 font-medium">{{ lgu.lgu }}</td>
+                  <td class="py-1.5">{{ formatCurrency(lgu.rate) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="showLguRates" class="text-xs text-black/60 italic mt-2">
+              From the SPES Hiring Rate sheet. Cross-check against province-wide
+              averages used elsewhere on this dashboard.
             </p>
           </div>
 
