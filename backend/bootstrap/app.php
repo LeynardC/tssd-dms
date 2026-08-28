@@ -15,9 +15,18 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
 
+        // Baseline response headers for every route this backend serves.
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+
         $middleware->alias([
             'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
-            'guest' => \App\Http\Middleware\RedirectIfAuthenticated::class,
+        ]);
+
+        // Runs first for every /api request — see the 'api' limiter in
+        // AppServiceProvider. Not a framework default in Laravel 11 unless
+        // install:api was run, which it wasn't here.
+        $middleware->prependToGroup('api', [
+            'throttle:api',
         ]);
 
         $middleware->appendToGroup('api', [

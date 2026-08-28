@@ -25,8 +25,12 @@ class ResetUserPassword implements ResetsUserPasswords
             'password' => $this->passwordRules(),
         ])->validate();
 
+        // Completing the reset flow proves control of the account and sets a
+        // policy-compliant password — clear the forced-change flag so the
+        // user isn't immediately asked to change it again on next login.
         $user->forceFill([
             'password' => Hash::make($input['password']),
+            'must_change_password' => false,
         ])->save();
     }
 }
