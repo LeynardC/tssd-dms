@@ -4,6 +4,7 @@ import { getProgram, balance, type Metric } from "../data/mockMonitoring";
 import { useProgramFiles } from "../composables/useProgramFiles";
 import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 import { formatCurrency } from "../../../utils/format";
 import {
   AlertTriangle,
@@ -91,6 +92,81 @@ const lguRatesForScope = computed(() => {
   return uploadRecord.value?.data.lguRates?.[props.scope] ?? [];
 });
 
+// Generic breakdown slots (GIP's NTP table + month-by-month; DO 174 / AMP
+// will use the same two). Rendered only when the active file carries them,
+// so SPES dashboards are untouched.
+const subScopeForScope = computed(
+  () => uploadRecord.value?.data.subScopeBreakdown?.[props.scope] ?? [],
+);
+const periodicForScope = computed(
+  () => uploadRecord.value?.data.periodicBreakdown?.[props.scope] ?? [],
+);
+const periodicFineForScope = computed(
+  () => uploadRecord.value?.data.periodicBreakdownFine?.[props.scope] ?? [],
+);
+const periodicSubRowsForScope = computed(() => {
+  const src =
+    periodicMode.value === "cutoff" && hasCutoffView.value
+      ? uploadRecord.value?.data.periodicSubRowsFine
+      : uploadRecord.value?.data.periodicSubRows;
+  return src?.[props.scope] ?? {};
+});
+const breakdownLabels = computed(
+  () => uploadRecord.value?.data.breakdownLabels ?? {},
+);
+const showSubScope = ref(false);
+const showPeriodic = ref(false);
+
+// Which period rows are expanded to show their NTP-level detail.
+const openPeriodBuckets = ref<Set<string>>(new Set());
+function togglePeriodBucket(key: string) {
+  const next = new Set(openPeriodBuckets.value);
+  next.has(key) ? next.delete(key) : next.add(key);
+  openPeriodBuckets.value = next;
+}
+function subRowsFor(bucket: string) {
+  return periodicSubRowsForScope.value[bucket] ?? [];
+}
+// "monthly" is the default; "cutoff" splits each month into its 1–15 / 16–end
+// halves. Only offered when the file carries the finer breakdown.
+const periodicMode = ref<"monthly" | "cutoff">("monthly");
+const hasCutoffView = computed(() => periodicFineForScope.value.length > 0);
+const activePeriodic = computed(() =>
+  periodicMode.value === "cutoff" && hasCutoffView.value
+    ? periodicFineForScope.value
+    : periodicForScope.value,
+);
+
+const subScopeColumns = computed(() =>
+  subScopeForScope.value.length ? subScopeForScope.value[0].values.map((v) => v.label) : [],
+);
+
+function fmtUnit(
+  value: number | null,
+  unit: "count" | "currency" | "days",
+): string {
+  if (value === null) return "—";
+  if (unit === "currency") return formatCurrency(value);
+  if (unit === "days") return value.toFixed(1) + " d";
+  return value.toLocaleString();
+}
+
+const periodicWithCumulative = computed(() => {
+  const fundTarget =
+    entries.value[0]?.metrics.find((m) => m.key === "fund")?.target ?? null;
+  let cumSecondary = 0;
+  return activePeriodic.value.map((b) => {
+    cumSecondary += b.secondary;
+    return {
+      ...b,
+      cumSecondary,
+      cumPct: fundTarget
+        ? Math.min((cumSecondary / fundTarget) * 100, 100)
+        : null,
+    };
+  });
+});
+
 const lguRateSummary = computed(() => {
   const rates = lguRatesForScope.value;
   if (!rates.length) return null;
@@ -171,8 +247,18 @@ function categorizeNote(text: string): NoteChip {
     return { icon: CheckCircle, label: "Processing", text };
   if (t.includes("cost-share split"))
     return { icon: Banknote, label: "Cost Share", text };
-  if (t.includes("avg. processing time"))
+  if (t.includes("processing time"))
     return { icon: Clock, label: "Speed", text };
+  if (t.includes("pipeline"))
+    return { icon: CheckCircle, label: "Pipeline", text };
+  if (t.includes("on hold"))
+    return { icon: AlertTriangle, label: "On Hold", text };
+  if (t.includes("over / near ceiling"))
+    return { icon: AlertTriangle, label: "Ceiling", text };
+  if (t.includes("exceeds") && t.includes("allocation"))
+    return { icon: AlertTriangle, label: "Over Allocation", text };
+  if (t.includes("no allocation row"))
+    return { icon: DollarSign, label: "Unbudgeted", text };
   return { icon: Pin, label: "Note", text };
 }
 
@@ -292,6 +378,7 @@ function handlePrint() {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md print:hidden">
+      <ParentLink :crumbs="crumbs" label="Scopes" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program.fullName }} — Dashboard
@@ -614,6 +701,205 @@ function handlePrint() {
             <p v-if="showLguRates" class="text-xs text-black/60 italic mt-2">
               From the SPES Hiring Rate sheet. Cross-check against province-wide
               averages used elsewhere on this dashboard.
+            </p>
+          </div>
+
+          <!-- Generic sub-scope table: NTP breakdown for GIP -->
+          <div
+            v-if="subScopeForScope.length"
+            class="border-t border-black/5 pt-3 mb-3"
+          >
+            <button
+              @click="showSubScope = !showSubScope"
+              class="text-xs font-medium text-dole-blue flex items-center gap-1"
+            >
+              {{ showSubScope ? "▾" : "▸" }}
+              {{ breakdownLabels.subScope ?? "Sub-scope breakdown" }}
+              <span class="text-black/50 font-normal ml-1"
+                >({{ subScopeForScope.length }})</span
+              >
+            </button>
+            <div v-if="showSubScope" class="overflow-x-auto">
+              <table class="w-full text-xs mt-3">
+                <thead>
+                  <tr class="text-left text-black/50 border-b border-black/10">
+                    <th class="pb-1.5 pr-3">Name</th>
+                    <th
+                      v-for="col in subScopeColumns"
+                      :key="col"
+                      class="pb-1.5 pr-3 text-right whitespace-nowrap"
+                    >
+                      {{ col }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in subScopeForScope"
+                    :key="row.name"
+                    class="border-b border-black/5 last:border-0 align-top"
+                  >
+                    <td class="py-1.5 pr-3">
+                      <span class="font-medium">{{ row.name }}</span>
+                      <span
+                        v-if="row.note"
+                        class="block text-black/45 font-normal"
+                        >{{ row.note }}</span
+                      >
+                    </td>
+                    <td
+                      v-for="(v, vi) in row.values"
+                      :key="vi"
+                      class="py-1.5 pr-3 text-right whitespace-nowrap"
+                      :class="
+                        v.label === 'Balance' && (v.value ?? 0) < 0
+                          ? 'text-dole-red'
+                          : ''
+                      "
+                    >
+                      {{ fmtUnit(v.value, v.unit) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-if="showSubScope" class="text-xs text-black/60 italic mt-2">
+              {{
+                breakdownLabels.subScopeCaption ??
+                "Utilisation recomputed from the full Monitoring sheet. A negative balance means disbursements have passed the encoded allocation — or that no allocation has been encoded for that NTP yet."
+              }}
+            </p>
+          </div>
+
+          <!-- Generic periodic table: month-by-month disbursement for GIP -->
+          <div
+            v-if="periodicWithCumulative.length"
+            class="border-t border-black/5 pt-3 mb-3"
+          >
+            <button
+              @click="showPeriodic = !showPeriodic"
+              class="text-xs font-medium text-dole-blue flex items-center gap-1"
+            >
+              {{ showPeriodic ? "▾" : "▸" }}
+              {{ breakdownLabels.periodic ?? "Period-by-period breakdown" }}
+            </button>
+            <div
+              v-if="showPeriodic && hasCutoffView"
+              class="inline-flex rounded border border-black/15 text-xs mt-3 print:hidden"
+            >
+              <button
+                @click="periodicMode = 'monthly'"
+                class="px-2.5 py-1"
+                :class="
+                  periodicMode === 'monthly'
+                    ? 'bg-dole-blue text-white'
+                    : 'text-black/60'
+                "
+              >
+                {{ breakdownLabels.periodicCoarse ?? "Monthly" }}
+              </button>
+              <button
+                @click="periodicMode = 'cutoff'"
+                class="px-2.5 py-1"
+                :class="
+                  periodicMode === 'cutoff'
+                    ? 'bg-dole-blue text-white'
+                    : 'text-black/60'
+                "
+              >
+                {{ breakdownLabels.periodicFine ?? "By cut-off" }}
+              </button>
+            </div>
+            <table v-if="showPeriodic" class="w-full text-xs mt-3">
+              <thead>
+                <tr class="text-left text-black/50 border-b border-black/10">
+                  <th class="pb-1.5">
+                    {{ periodicMode === "cutoff" ? "Cut-off" : "Month" }}
+                  </th>
+                  <th class="pb-1.5 text-right">
+                    {{ breakdownLabels.periodicPrimary ?? "Count" }}
+                  </th>
+                  <th class="pb-1.5 text-right">
+                    {{ breakdownLabels.periodicSecondary ?? "Amount" }}
+                  </th>
+                  <th class="pb-1.5 text-right">Cumulative %</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template
+                  v-for="b in periodicWithCumulative"
+                  :key="b.bucket"
+                >
+                  <tr
+                    class="border-b border-black/5"
+                    :class="
+                      subRowsFor(b.bucket).length
+                        ? 'cursor-pointer hover:bg-black/[0.02]'
+                        : ''
+                    "
+                    @click="
+                      subRowsFor(b.bucket).length &&
+                        togglePeriodBucket(b.bucket)
+                    "
+                  >
+                    <td class="py-1.5 font-medium">
+                      <span
+                        v-if="subRowsFor(b.bucket).length"
+                        class="text-black/40 mr-1 inline-block w-2"
+                        >{{
+                          openPeriodBuckets.has(b.bucket) ? "▾" : "▸"
+                        }}</span
+                      >{{ b.label }}
+                      <span
+                        v-if="subRowsFor(b.bucket).length"
+                        class="text-black/40 font-normal"
+                        >({{ subRowsFor(b.bucket).length }})</span
+                      >
+                    </td>
+                    <td class="py-1.5 text-right">
+                      {{ b.primary.toLocaleString() }}
+                    </td>
+                    <td class="py-1.5 text-right">
+                      {{ formatCurrency(b.secondary) }}
+                    </td>
+                    <td class="py-1.5 text-right text-black/60">
+                      {{ b.cumPct !== null ? b.cumPct.toFixed(1) + "%" : "—" }}
+                    </td>
+                  </tr>
+                  <tr
+                    v-for="sr in openPeriodBuckets.has(b.bucket)
+                      ? subRowsFor(b.bucket)
+                      : []"
+                    :key="b.bucket + '::' + sr.name"
+                    class="border-b border-black/5 bg-black/[0.015]"
+                  >
+                    <td class="py-1 pl-5 text-black/70">
+                      {{ sr.name }}
+                      <span
+                        v-if="sr.note"
+                        class="block text-[11px] text-black/45"
+                        >{{ sr.note }}</span
+                      >
+                    </td>
+                    <td class="py-1 text-right text-black/70">
+                      {{ sr.primary.toLocaleString() }}
+                    </td>
+                    <td class="py-1 text-right text-black/70">
+                      {{ formatCurrency(sr.secondary) }}
+                    </td>
+                    <td class="py-1"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p v-if="showPeriodic" class="text-xs text-black/60 italic mt-2">
+              From {{ breakdownLabels.periodicSourceLabel ?? "each payroll's employment period" }}.
+              Click a row to see the {{ breakdownLabels.periodicRowNoun ?? "NTPs paid" }}
+              in that {{ periodicMode === "cutoff" ? "cut-off" : "month" }}.
+              <template v-if="periodicMode === 'cutoff'">
+                A line covering two months is shown in its start cut-off.
+              </template>
+              Cumulative % is against the scope's fund allocation.
             </p>
           </div>
 

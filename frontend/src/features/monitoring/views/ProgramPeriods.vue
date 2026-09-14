@@ -15,6 +15,7 @@ import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 
 const { confirmAction } = useConfirm();
 const { showToast } = useToast();
@@ -113,6 +114,13 @@ function openPreview(file: FileRecord) {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
+      <!-- Staff land here from the redirect, so "up" would just loop; only
+           the Chief actually navigated down from the Monitoring hub. -->
+      <ParentLink
+        v-if="currentRole === 'chief'"
+        :crumbs="crumbs"
+        label="Monitoring"
+      />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program.fullName }}
