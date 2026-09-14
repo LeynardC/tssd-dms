@@ -10,6 +10,7 @@ import { ensureUnitsLoaded, unitLabels } from "../../units/data/unitCache";
 import { currentRole } from "../../monitoring/role";
 import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 
 const props = defineProps<{ programCode: string }>();
 const { showToast } = useToast();
@@ -106,6 +107,7 @@ function initials(name: string): string {
 <template>
   <div class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
+      <ParentLink :crumbs="crumbs" label="Programs" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program?.name ?? props.programCode }}

@@ -5,7 +5,7 @@ import {
   type PeriodEntry,
   type Metric,
 } from "../../monitoring/data/mockMonitoring";
-import { hasParser } from "../../monitoring/parsers";
+import { hasParser } from "../../monitoring/parsers/registry";
 import { useProgramFiles } from "../../monitoring/composables/useProgramFiles";
 import { exportSheetNames } from "../reportShared";
 import type { ReportInput } from "../reportShared";

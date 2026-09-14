@@ -3,9 +3,10 @@ import { ref, onMounted, computed } from "vue";
 import {
   addProgram,
   renameProgram,
-  toggleProgramStatus,
+  retireProgram,
   type ProgramRecord,
 } from "../data/programStore";
+import { ApiError } from "../../auth/authService";
 import { currentRole } from "../../monitoring/role";
 import { useConfirm } from "../../../composables/useConfirm";
 import { usePrompt } from "../../../composables/usePrompt";
@@ -14,6 +15,7 @@ import {
   ensureProgramsLoaded,
   refreshPrograms,
   allPrograms,
+  activePrograms,
   programsLoading,
   programsError,
 } from "../data/programCache";
@@ -26,7 +28,7 @@ import {
 const programFilter = ref("");
 
 const programs = computed(() => {
-  const sorted = [...allPrograms.value].sort(
+  const sorted = [...activePrograms.value].sort(
     (a, b) => a.unit.localeCompare(b.unit) || a.name.localeCompare(b.name),
   );
   const q = programFilter.value.trim().toLowerCase();
@@ -35,6 +37,9 @@ const programs = computed(() => {
     (p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q),
   );
 });
+const archivedCount = computed(
+  () => allPrograms.value.filter((p) => p.retired).length,
+);
 const loading = programsLoading;
 const loadError = programsError;
 
@@ -84,8 +89,11 @@ async function handleAdd() {
     newName.value = "";
     showAddForm.value = false;
     await refreshPrograms();
-  } catch {
-    showToast("Could not add program.", "error");
+  } catch (err) {
+    showToast(
+      err instanceof ApiError ? err.message : "Could not add program.",
+      "error",
+    );
   } finally {
     adding.value = false;
   }
@@ -111,29 +119,31 @@ async function handleRename(prog: ProgramRecord) {
     await renameProgram(prog.id, trimmed);
     await refreshPrograms();
     showToast(`Program renamed to "${trimmed}"`, "success");
-  } catch {
-    showToast("Could not rename program.", "error");
+  } catch (err) {
+    showToast(
+      err instanceof ApiError ? err.message : "Could not rename program.",
+      "error",
+    );
   }
 }
 
-async function handleToggle(prog: ProgramRecord) {
-  const action = prog.retired ? "reactivate" : "retire";
+async function handleRetire(prog: ProgramRecord) {
   const ok = await confirmAction({
-    title: action === "retire" ? "Retire Program" : "Reactivate Program",
-    message: `Are you sure you want to ${action} "${prog.name}"?`,
-    confirmLabel: action === "retire" ? "Retire" : "Reactivate",
-    danger: action === "retire",
+    title: "Retire Program",
+    message: `"${prog.name}" will move to Archived Programs. You can restore it later.`,
+    confirmLabel: "Retire",
+    danger: true,
   });
   if (!ok) return;
   try {
-    await toggleProgramStatus(prog.id);
+    await retireProgram(prog.id);
     await refreshPrograms();
+    showToast(`"${prog.name}" retired.`, "success");
+  } catch (err) {
     showToast(
-      `"${prog.name}" ${action === "retire" ? "retired" : "reactivated"}`,
-      "success",
+      err instanceof ApiError ? err.message : "Could not retire program.",
+      "error",
     );
-  } catch {
-    showToast("Could not update program.", "error");
   }
 }
 
@@ -150,13 +160,21 @@ const isChief = computed(() => currentRole.value === "chief");
     </header>
 
     <main class="max-w-4xl mx-auto px-8 py-8">
-      <button
-        v-if="isChief"
-        @click="showAddForm = !showAddForm"
-        class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition mb-6"
-      >
-        + Add Program
-      </button>
+      <div v-if="isChief" class="flex items-center gap-3 mb-6">
+        <button
+          @click="showAddForm = !showAddForm"
+          class="bg-dole-blue text-white text-sm px-4 py-2 rounded hover:bg-dole-blue-dark transition"
+        >
+          + Add Program
+        </button>
+        <router-link
+          :to="{ name: 'program-archive' }"
+          class="text-sm text-dole-blue hover:underline"
+        >
+          Archived Programs
+          <span v-if="archivedCount > 0">({{ archivedCount }})</span>
+        </router-link>
+      </div>
 
       <div
         v-if="isChief && showAddForm"
@@ -278,7 +296,6 @@ const isChief = computed(() => currentRole.value === "chief");
                 <th class="p-3">Name</th>
                 <th class="p-3">Code</th>
                 <th class="p-3">Unit</th>
-                <th class="p-3">Status</th>
                 <th class="p-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -287,7 +304,6 @@ const isChief = computed(() => currentRole.value === "chief");
                 v-for="prog in programs"
                 :key="prog.id"
                 class="border-b border-black/5 last:border-0"
-                :class="prog.retired ? 'opacity-50' : ''"
               >
                 <td class="p-3 font-medium">{{ prog.name }}</td>
                 <td class="p-3 text-black/60 font-mono text-xs">
@@ -295,18 +311,6 @@ const isChief = computed(() => currentRole.value === "chief");
                 </td>
                 <td class="p-3 text-black/60">
                   {{ unitLabels[prog.unit] ?? prog.unit }}
-                </td>
-                <td class="p-3">
-                  <span
-                    class="text-xs px-2 py-0.5 rounded-full"
-                    :class="
-                      !prog.retired
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-black/10 text-black/50'
-                    "
-                  >
-                    {{ prog.retired ? "Retired" : "Active" }}
-                  </span>
                 </td>
                 <td class="p-3 text-right space-x-3">
                   <router-link
@@ -323,10 +327,10 @@ const isChief = computed(() => currentRole.value === "chief");
                       Rename
                     </button>
                     <button
-                      @click="handleToggle(prog)"
+                      @click="handleRetire(prog)"
                       class="text-xs text-dole-red hover:underline"
                     >
-                      {{ prog.retired ? "Reactivate" : "Retire" }}
+                      Retire
                     </button>
                   </template>
                 </td>
