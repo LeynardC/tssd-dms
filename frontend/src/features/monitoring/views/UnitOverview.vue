@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { programs } from "../data/mockMonitoring";
-import { hasParser } from "../parsers";
+import { hasParser } from "../parsers/registry";
 import { currentRole, assignedProgram } from "../role";
 
 // Only programs wired to a real .xlsx parser have monitoring data to show —

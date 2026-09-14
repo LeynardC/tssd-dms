@@ -17,6 +17,7 @@ import { getFolders } from "../data/folderStore";
 import { currentRole } from "../role";
 import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 import {
   useProgramFiles,
   findShadowedPeriods,
@@ -139,13 +140,10 @@ async function handleConfirmSave() {
   saving.value = true;
   saveError.value = null;
   uploadProgress.value = 0;
-  const parsedData = {
-    periods: result.value.periods,
-    warnings: result.value.warnings,
-    quarterly: result.value.quarterly,
-    unutilizedFunds: result.value.unutilizedFunds,
-    lguRates: result.value.lguRates,
-  };
+  // Persist the whole parse result — periods/warnings, the SPES bespoke
+  // extras, and the generic breakdown slots (periodicBreakdown /
+  // subScopeBreakdown / breakdownLabels) that GIP and later parsers fill.
+  const parsedData = { ...result.value };
   // Queued BEFORE attempting the network call, the same way File Explorer's
   // upload flow now does — this is IndexedDB-backed and survives a closed
   // browser or power loss, so a crash mid-save doesn't lose the file with no
@@ -225,6 +223,7 @@ async function handleConfirmSave() {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
+      <ParentLink :crumbs="crumbs" label="Periods" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         Upload {{ program.name }} File

@@ -4,6 +4,7 @@ import { Folder, FileText, RotateCcw, Trash2, Lock, Info } from "@lucide/vue";
 import {
   ensureProgramsLoaded,
   activePrograms,
+  allPrograms,
 } from "../../programs/data/programCache";
 import { canManageFolders } from "../data/folderStore";
 import {
@@ -19,14 +20,17 @@ import { useConfirm } from "../../../composables/useConfirm";
 import { useToast } from "../../../composables/useToast";
 import { useVisibilityRefresh } from "../../../composables/useVisibilityRefresh";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 
 const props = defineProps<{ programId: string }>();
 
 const { confirmAction } = useConfirm();
 const { showToast } = useToast();
 
-const program = computed(() =>
-  activePrograms.value.find((p) => p.code === props.programId),
+const program = computed(
+  () =>
+    activePrograms.value.find((p) => p.code === props.programId) ??
+    allPrograms.value.find((p) => p.code === props.programId),
 );
 const canManage = computed(() => canManageFolders(props.programId));
 
@@ -259,6 +263,7 @@ async function handleEmptyBin() {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
+      <ParentLink :crumbs="crumbs" label="Files" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">Recycle Bin</h1>
       <p class="text-sm text-white/75 mt-1">

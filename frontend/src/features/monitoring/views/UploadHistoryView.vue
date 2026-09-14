@@ -4,12 +4,11 @@ import { getProgram, balance, type Metric } from "../data/mockMonitoring";
 import { getFileById } from "../data/fileStore";
 import type { ParsedFileData } from "../composables/useProgramFiles";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 import { formatCurrency } from "../../../utils/format";
-import { useRouter } from "vue-router";
 
 const props = defineProps<{ programId: string; uploadId: string }>();
 const program = computed(() => getProgram(props.programId));
-const router = useRouter();
 
 const periodId = computed(() => {
   const first = parsedData.value?.periods[0];
@@ -17,9 +16,6 @@ const periodId = computed(() => {
   return first.quarter ? `${first.year}-${first.quarter}` : `${first.year}`;
 });
 
-function goBack() {
-  router.back();
-}
 const loading = ref(true);
 const error = ref<string | null>(null);
 const fileName = ref("");
@@ -102,6 +98,7 @@ function handlePrint() {
 <template>
   <div v-if="program" class="min-h-screen bg-paper">
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md print:hidden">
+      <ParentLink :crumbs="crumbs" label="Periods" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program.fullName }} — Historical Upload
@@ -110,15 +107,11 @@ function handlePrint() {
         Source: {{ fileName }} • Uploaded {{ formatDate(uploadedAt) }} by
         {{ uploadedByName }}
       </p>
-      <div class="flex items-center gap-4 mt-3">
-        <button
-          @click="goBack"
-          class="text-sm text-white/90 hover:text-white hover:underline"
-        >
-          ← Back
-        </button>
+      <div
+        v-if="!loading && parsedData && periodId"
+        class="flex items-center gap-4 mt-3"
+      >
         <router-link
-          v-if="!loading && parsedData && periodId"
           :to="{
             name: 'period-scopes',
             params: { programId: props.programId, periodId },

@@ -6,6 +6,7 @@ import { hasParser, parseWorkbookForProgram } from "../parsers";
 import {
   ensureProgramsLoaded,
   activePrograms,
+  allPrograms,
   programsLoading,
 } from "../../programs/data/programCache";
 import {
@@ -18,6 +19,7 @@ import {
 } from "../data/folderStore";
 import {
   getFiles,
+  getFileById,
   uploadFileWithProgress,
   replaceFile,
   renameFile,
@@ -50,6 +52,7 @@ import { useConfirm } from "../../../composables/useConfirm";
 import { usePrompt } from "../../../composables/usePrompt";
 import { useToast } from "../../../composables/useToast";
 import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs.vue";
+import ParentLink from "../../../components/ParentLink.vue";
 import Modal from "../../../components/Modal.vue";
 import ExplorerItem from "../components/ExplorerItem.vue";
 import ExplorerMenu from "../components/ExplorerMenu.vue";
@@ -74,8 +77,14 @@ const normalizedFolderPath = computed<string[]>(() => {
   return [props.folderPath];
 });
 const router = useRouter();
-const program = computed(() =>
-  activePrograms.value.find((p) => p.code === props.programId),
+// Falls back to allPrograms so a retired program still resolves when
+// reached via "Browse" from Archived Programs, instead of showing
+// "Program not found" — every other consumer of activePrograms elsewhere
+// (dropdowns, pickers) is unaffected.
+const program = computed(
+  () =>
+    activePrograms.value.find((p) => p.code === props.programId) ??
+    allPrograms.value.find((p) => p.code === props.programId),
 );
 const { confirmAction } = useConfirm();
 const { promptAction } = usePrompt();
@@ -305,13 +314,9 @@ async function tryParseXlsx(file: File): Promise<unknown | undefined> {
       p.metrics.some((m) => !m.isPlaceholder && m.actual !== 0),
     );
     if (!hasRealData) return undefined;
-    return {
-      periods: result.periods,
-      warnings: result.warnings,
-      quarterly: result.quarterly,
-      unutilizedFunds: result.unutilizedFunds,
-      lguRates: result.lguRates,
-    };
+    // Persist the whole parse result, including the generic breakdown slots
+    // (periodicBreakdown / subScopeBreakdown) that GIP and later parsers fill.
+    return { ...result };
   } catch {
     return undefined;
   }
@@ -756,6 +761,9 @@ async function confirmMove() {
 // --- Info modal ---
 const infoTarget = ref<MenuTarget | null>(null);
 const previewTarget = ref<FileRecord | null>(null);
+// The folder listing is slim (no parsed_data), so the Info panel pulls the
+// one file's full record on demand when it needs the parsed extras.
+const infoFileFull = ref<FileRecord | null>(null);
 
 // --- Activity log (Info modal) ---
 const activityLog = ref<ActivityLogEntry[]>([]);
@@ -765,11 +773,22 @@ const activityError = ref("");
 watch(infoTarget, async (target) => {
   activityLog.value = [];
   activityError.value = "";
+  infoFileFull.value = null;
   if (!target) return;
 
   const subjectType = target.kind === "folder" ? "Folder" : "File";
   const subjectId = target.folder?.id ?? target.file?.id;
   if (!subjectId) return;
+
+  if (target.kind === "file" && target.file) {
+    getFileById(target.file.id)
+      .then((full) => {
+        if (infoTarget.value?.file?.id === full.id) infoFileFull.value = full;
+      })
+      .catch(() => {
+        /* Info panel just shows the listing fields without the parsed extras */
+      });
+  }
 
   activityLoading.value = true;
   try {
@@ -814,6 +833,8 @@ function handleFilePreview() {
 }
 
 function hasParsedData(file: FileRecord): boolean {
+  // The slim folder listing sends `has_parsed_data` instead of the blob.
+  if (file.has_parsed_data !== undefined) return !!file.has_parsed_data;
   return !!file.parsed_data && Array.isArray((file.parsed_data as any).periods);
 }
 
@@ -827,8 +848,10 @@ interface UnutilizedFundEntry {
 function getUnutilizedFunds(
   file: FileRecord | undefined,
 ): UnutilizedFundEntry[] {
-  if (!file?.parsed_data) return [];
-  const data = file.parsed_data as any;
+  // Reads from infoFileFull (the on-demand full record) since the listing
+  // itself is slim and carries no parsed_data.
+  const data = infoFileFull.value?.parsed_data as any;
+  if (!file || !data) return [];
   return Array.isArray(data.unutilizedFunds) ? data.unutilizedFunds : [];
 }
 // #endregion
@@ -883,6 +906,7 @@ useVisibilityRefresh(
     @drop="handleDrop"
   >
     <header class="bg-dole-blue text-white px-8 py-6 shadow-md">
+      <ParentLink :crumbs="crumbs" />
       <Breadcrumbs :crumbs="crumbs" />
       <h1 class="font-display text-2xl font-semibold mt-1">
         {{ program.name }} — Files
