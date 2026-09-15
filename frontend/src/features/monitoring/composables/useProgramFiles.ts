@@ -207,6 +207,24 @@ function fetchProgram(
   return e.inFlight;
 }
 
+// Read-only peek at whatever's already cached for a program, with no fetch
+// triggered — for callers (global search) that want live data if it's
+// already warm but must not force a network call on every keystroke.
+export function peekCachedPeriods(programId: string): PeriodWithSource[] {
+  return cache.get(programId)?.periods.value ?? [];
+}
+
+// Populates the cache for a program that peekCachedPeriods() might be asked
+// about soon, without surfacing any loading state — same "never loaded /
+// stale beyond the revalidate window" rule the reactive composable uses on
+// mount, just triggered imperatively instead of via a component's watch.
+export function warmProgramFiles(programId: string): void {
+  const e = entryFor(programId);
+  if (e.loadedAt === 0 || Date.now() - e.loadedAt > REVALIDATE_AFTER_MS) {
+    fetchProgram(programId, { background: true });
+  }
+}
+
 export function useProgramFiles(programId: Ref<string> | string) {
   const idRef: Ref<string> =
     typeof programId === "string" ? ref(programId) : programId;
