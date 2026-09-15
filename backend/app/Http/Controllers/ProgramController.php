@@ -12,10 +12,14 @@ class ProgramController extends Controller
 {
     public function index()
     {
-        $programs = Program::where('retired', false)
+        $programs = Program::with('retiredBy:id,name')
             ->orderBy('unit')
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function (Program $program) {
+                $program->retired_by_name = $program->retiredBy->name ?? null;
+                return $program;
+            });
 
         return response()->json(['programs' => $programs]);
     }
@@ -88,13 +92,45 @@ class ProgramController extends Controller
         return response()->json(['program' => $program->fresh()]);
     }
 
-    public function toggleStatus(Request $request, Program $program)
+    public function retire(Request $request, Program $program)
     {
-        $program->update(['retired' => !$program->retired]);
+        if ($program->retired) {
+            abort(400, 'This program is already retired.');
+        }
+
+        $program->update([
+            'retired' => true,
+            'retired_at' => now(),
+            'retired_by' => $request->user()->id,
+        ]);
 
         ActivityLog::record(
             actor: $request->user(),
-            action: $program->retired ? 'program.retired' : 'program.restored',
+            action: 'program.retired',
+            subjectType: 'Program',
+            subjectId: $program->id,
+            subjectLabel: $program->name,
+            metadata: ['unit' => $program->unit],
+        );
+
+        return response()->json(['program' => $program->fresh()]);
+    }
+
+    public function restore(Request $request, Program $program)
+    {
+        if (!$program->retired) {
+            abort(400, 'This program is not retired.');
+        }
+
+        $program->update([
+            'retired' => false,
+            'retired_at' => null,
+            'retired_by' => null,
+        ]);
+
+        ActivityLog::record(
+            actor: $request->user(),
+            action: 'program.restored',
             subjectType: 'Program',
             subjectId: $program->id,
             subjectLabel: $program->name,

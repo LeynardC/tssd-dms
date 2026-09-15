@@ -72,7 +72,24 @@ class FileController extends Controller
             // must not surface elsewhere either — otherwise "deleting" a
             // folder wouldn't actually remove its data from Monitoring.
             ->whereDoesntHave('folder', fn ($q) => $q->where('retired', true))
-            ->orderBy('original_name');
+            ->orderBy('original_name')
+            // Safety cap — no real folder holds this many files, but it stops
+            // a pathological program from returning an unbounded payload.
+            ->limit(2000);
+
+        // The File Explorer only needs to KNOW whether a file carries parsed
+        // monitoring data, not the (potentially large) blob itself — it asks
+        // for ?slim=1 and gets a `has_parsed_data` flag instead. The
+        // Monitoring/Export views omit the flag and get the full column.
+        if ($request->boolean('slim')) {
+            $columns = collect((new File)->getFillable())
+                ->reject(fn ($c) => $c === 'parsed_data')
+                ->push('id', 'created_at', 'updated_at', 'deleted_at')
+                ->unique()
+                ->all();
+            $query->select($columns)
+                ->selectRaw('(parsed_data IS NOT NULL)::int AS has_parsed_data');
+        }
 
         if ($request->has('folder_id')) {
             if ($folderId === null || $folderId === 'null') {
