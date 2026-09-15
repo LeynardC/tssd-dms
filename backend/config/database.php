@@ -96,7 +96,15 @@ return [
             'prefix' => '',
             'prefix_indexes' => true,
             'search_path' => 'public',
+            // 'disable' on a local trusted socket skips the TLS handshake the
+            // pgsql driver otherwise negotiates on every fresh connection.
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // Opt-in persistent connections (DB_PERSISTENT=true) — avoids a new
+            // TCP + auth round-trip per request. Safe for a single-app dev box;
+            // review before enabling on a shared multi-tenant server.
+            'options' => env('DB_PERSISTENT', false) ? [
+                PDO::ATTR_PERSISTENT => true,
+            ] : [],
         ],
 
         'sqlsrv' => [
