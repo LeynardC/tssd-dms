@@ -149,6 +149,59 @@ export async function loginWithPasskey(): Promise<void> {
   });
 }
 
+// Step-up re-verification for an already-authenticated session (e.g. before
+// restoring a retired program) — proves possession of an existing passkey.
+// Mirrors loginWithPasskey()'s shape but against the passkeys package's
+// confirm-only endpoints, which mark the session password-confirmed instead
+// of logging in.
+export async function confirmPasskey(): Promise<void> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+
+  const { options } = await apiFetch<{ options: any }>(
+    "/passkeys/confirm/options",
+    { xsrf },
+  );
+
+  const publicKey: CredentialRequestOptions["publicKey"] = {
+    ...options,
+    challenge: base64urlToBuffer(options.challenge),
+    allowCredentials: (options.allowCredentials ?? []).map((c: any) => ({
+      ...c,
+      id: base64urlToBuffer(c.id),
+    })),
+  };
+
+  const credential = (await navigator.credentials.get({
+    publicKey,
+  })) as PublicKeyCredential;
+
+  if (!credential) {
+    throw new Error("Passkey verification was cancelled.");
+  }
+
+  const response = credential.response as AuthenticatorAssertionResponse;
+
+  await apiFetch("/passkeys/confirm", {
+    method: "POST",
+    xsrf,
+    body: JSON.stringify({
+      credential: {
+        id: credential.id,
+        rawId: bufferToBase64url(credential.rawId),
+        type: credential.type,
+        response: {
+          clientDataJSON: bufferToBase64url(response.clientDataJSON),
+          authenticatorData: bufferToBase64url(response.authenticatorData),
+          signature: bufferToBase64url(response.signature),
+          userHandle: response.userHandle
+            ? bufferToBase64url(response.userHandle)
+            : null,
+        },
+      },
+    }),
+  });
+}
+
 export async function deletePasskey(id: number): Promise<void> {
   const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
   await apiFetch(`/user/passkeys/${id}`, { method: "DELETE", xsrf });

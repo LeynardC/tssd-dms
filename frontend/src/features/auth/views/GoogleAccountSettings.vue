@@ -72,7 +72,10 @@ async function handleUnlink() {
   try {
     await unlinkOAuthAccount(activeLink.value.id);
     await loadLinks();
-    showToast(isApproved ? "Google account unlinked." : "Request cancelled.", "success");
+    showToast(
+      isApproved ? "Google account unlinked." : "Request cancelled.",
+      "success",
+    );
   } catch {
     showToast("Could not update your Google account link.", "error");
   } finally {
@@ -104,8 +107,8 @@ onMounted(async () => {
       Google Account
     </h2>
     <p class="text-sm text-black/60 mb-4">
-      Link a Google account (personal or work) to sign in without your
-      password. Requires Chief approval before it can be used.
+      Link a Google account (personal or work) to sign in without your password.
+      Requires Chief approval before it can be used.
     </p>
 
     <div v-if="loading" class="text-sm text-black/50">Loading…</div>
@@ -149,9 +152,13 @@ onMounted(async () => {
       <template v-else>
         <p v-if="lastRejected" class="text-sm text-dole-red mb-3">
           Your last request ({{ lastRejected.provider_email }}) was declined{{
-            lastRejected.rejection_reason ? `: ${lastRejected.rejection_reason}` : "."
+            lastRejected.rejection_reason
+              ? `: ${lastRejected.rejection_reason}`
+              : "."
           }}
-          <template v-if="googleSignInEnabled">You can try linking again.</template>
+          <template v-if="googleSignInEnabled"
+            >You can try linking again.</template
+          >
         </p>
         <p v-else class="text-sm text-black/50 mb-4">
           No Google account linked yet.

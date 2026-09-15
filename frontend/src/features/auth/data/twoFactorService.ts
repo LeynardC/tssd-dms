@@ -90,6 +90,19 @@ export async function twoFactorChallenge(input: {
   });
 }
 
+// Step-up re-verification for an already-authenticated session (e.g. before
+// restoring a retired program) — verifies a live authenticator code without
+// disabling/re-enabling 2FA. On success this satisfies the same
+// password.confirm gate that confirmPassword() and passkey confirmation do.
+export async function confirmTwoFactorCode(code: string): Promise<void> {
+  const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
+  await apiFetch("/api/user/confirm-two-factor-code", {
+    method: "POST",
+    xsrf,
+    body: JSON.stringify({ code }),
+  });
+}
+
 // Disable — also gated behind a fresh confirmPassword() call by the caller.
 export async function disableTwoFactor(): Promise<void> {
   const xsrf = readCookie("XSRF-TOKEN") ?? (await getXsrfToken());
