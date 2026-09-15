@@ -9,8 +9,12 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Keep the service worker to production builds only. In dev it intercepts
+      // fetches and can drop custom headers (e.g. `Accept: application/json` on
+      // the login POST), which makes Fortify fall back to a browser-style 302
+      // redirect and surfaces as an opaque CORS failure.
       devOptions: {
-        enabled: true
+        enabled: false
       },
       manifest: {
         name: 'TSSD Document Management System',

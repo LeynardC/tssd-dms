@@ -3,8 +3,19 @@
   "configurations": [
     {
       "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend",
       "url": "http://localhost:5173",
       "port": 5173,
+      "autoPort": false
+    },
+    {
+      "name": "demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "-l", "5500", "../tssd-dms-demo"],
+      "url": "http://localhost:5500",
+      "port": 5500,
       "autoPort": false
     }
   ]
