@@ -114,6 +114,13 @@ const routes = [
           import("../features/programs/views/ProgramList.vue"),
       },
       {
+        path: "programs/archive",
+        name: "program-archive",
+        component: () =>
+          import("../features/programs/views/ProgramArchive.vue"),
+        meta: { chiefOnly: true },
+      },
+      {
         path: "programs/:programCode",
         name: "program-profile",
         component: () =>

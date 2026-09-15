@@ -5,6 +5,7 @@ import { currentRole } from "../features/monitoring/role";
 import ToastContainer from "../components/ToastContainer.vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import PromptDialog from "../components/PromptDialog.vue";
+import IdentityVerifyDialog from "../components/IdentityVerifyDialog.vue";
 import { logout } from "../features/auth/authService";
 import { currentUser, setCurrentUser } from "../features/auth/authStore";
 import {
@@ -392,6 +393,6 @@ async function handleLogout() {
     </div>
 
     <ToastContainer />
-    <ConfirmDialog /> <PromptDialog />
+    <ConfirmDialog /> <PromptDialog /> <IdentityVerifyDialog />
   </div>
 </template>

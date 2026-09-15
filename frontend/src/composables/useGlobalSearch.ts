@@ -4,7 +4,7 @@ import {
   searchMonitoringScopes,
   type MonitoringSearchResult,
 } from "../features/monitoring/data/mockMonitoring";
-import { hasParser } from "../features/monitoring/parsers";
+import { hasParser } from "../features/monitoring/parsers/registry";
 
 export interface FileSearchResult {
   id: number;
