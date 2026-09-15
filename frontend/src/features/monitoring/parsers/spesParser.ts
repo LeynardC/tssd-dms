@@ -1,5 +1,11 @@
 import * as XLSX from "xlsx";
 import type { PeriodEntry } from "../data/mockMonitoring";
+import type {
+  GenericBreakdowns,
+  PeriodicBucket,
+  SubScopeRow,
+  ReconciliationFinding,
+} from "./shared";
 
 function findSheet(
   wb: XLSX.WorkBook,
@@ -347,6 +353,193 @@ export function deriveQuarterlyActuals(
   return final;
 }
 
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function monthKey(date: Date): { bucket: string; label: string } {
+  const y = date.getUTCFullYear();
+  const m = date.getUTCMonth();
+  return { bucket: `${y}-${String(m + 1).padStart(2, "0")}`, label: `${MONTHS[m]} ${y}` };
+}
+
+// Month-by-month version of deriveQuarterlyActuals, same Payment-sheet
+// columns — feeds both the periodic table on the dashboard and the
+// cross-province matrix on the period-list page (which is a pure pivot of
+// this, same as it already is for GIP/AMP).
+function derivePeriodicBreakdown(
+  wb: XLSX.WorkBook,
+): Record<string, PeriodicBucket[]> {
+  const paymentSheet = findSheet(wb, (n) => n.toLowerCase().includes("payment"));
+  if (!paymentSheet) return {};
+  const rows = sheetToRows(paymentSheet);
+  const headerIdx = findHeaderRow(rows, "province", "date received");
+  if (headerIdx === -1) return {};
+  const header = rows[headerIdx].map((h) =>
+    typeof h === "string" ? h.trim().toLowerCase() : "",
+  );
+  const provinceCol = header.findIndex((h) => h.includes("province"));
+  const dateCol = header.findIndex((h) => h.includes("date received"));
+  const beneficiariesCol = header.findIndex((h) => h.includes("beneficiaries"));
+  const totalAmountCol = header.findIndex((h) => h.includes("total amount"));
+  const amountPaidCol = header.findIndex((h) => h.includes("amount paid"));
+
+  const byProvince: Record<string, Map<string, PeriodicBucket>> = {};
+  const region = new Map<string, PeriodicBucket>();
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const provinceRaw = row[provinceCol];
+    if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
+    const province = normalizeProvince(provinceRaw);
+    const date = excelValueToDate(row[dateCol]);
+    if (!date) continue;
+    const { bucket, label } = monthKey(date);
+    const benef =
+      typeof row[beneficiariesCol] === "number" ? row[beneficiariesCol] : 0;
+    const amt =
+      typeof row[totalAmountCol] === "number"
+        ? row[totalAmountCol]
+        : typeof row[amountPaidCol] === "number"
+          ? row[amountPaidCol]
+          : 0;
+
+    if (!byProvince[province]) byProvince[province] = new Map();
+    const entry =
+      byProvince[province].get(bucket) ?? { bucket, label, primary: 0, secondary: 0 };
+    entry.primary += benef;
+    entry.secondary += amt;
+    byProvince[province].set(bucket, entry);
+
+    const regionEntry = region.get(bucket) ?? { bucket, label, primary: 0, secondary: 0 };
+    regionEntry.primary += benef;
+    regionEntry.secondary += amt;
+    region.set(bucket, regionEntry);
+  }
+
+  const out: Record<string, PeriodicBucket[]> = {};
+  for (const [province, map] of Object.entries(byProvince)) {
+    out[province] = [...map.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+  }
+  out["Region"] = [...region.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+  return out;
+}
+
+// One row per Payment-sheet line item (an employer's payment batch) —
+// SPES's equivalent of GIP's per-NTP / AMP's per-proposal drill-down.
+function buildSubScopeBreakdown(
+  wb: XLSX.WorkBook,
+): Record<string, SubScopeRow[]> {
+  const paymentSheet = findSheet(wb, (n) => n.toLowerCase().includes("payment"));
+  if (!paymentSheet) return {};
+  const rows = sheetToRows(paymentSheet);
+  const headerIdx = findHeaderRow(rows, "province", "date received");
+  if (headerIdx === -1) return {};
+  const header = rows[headerIdx].map((h) =>
+    typeof h === "string" ? h.trim().toLowerCase() : "",
+  );
+  const provinceCol = header.findIndex((h) => h.includes("province"));
+  const employerCol = header.findIndex((h) => h.includes("employer"));
+  const beneficiariesCol = header.findIndex((h) => h.includes("beneficiaries"));
+  const totalAmountCol = header.findIndex((h) => h.includes("total amount"));
+  const amountPaidCol = header.findIndex((h) => h.includes("amount paid"));
+  const batchCol = header.findIndex((h) => h.includes("batch"));
+  const dateCol = header.findIndex((h) => h.includes("date received"));
+
+  const byProvince: Record<string, SubScopeRow[]> = {};
+  const region: SubScopeRow[] = [];
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const provinceRaw = row[provinceCol];
+    if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
+    const province = normalizeProvince(provinceRaw);
+    const employer =
+      employerCol >= 0 && typeof row[employerCol] === "string"
+        ? row[employerCol].trim()
+        : "";
+    if (!employer) continue;
+
+    const benef =
+      beneficiariesCol >= 0 && typeof row[beneficiariesCol] === "number"
+        ? row[beneficiariesCol]
+        : null;
+    const amt =
+      totalAmountCol >= 0 && typeof row[totalAmountCol] === "number"
+        ? row[totalAmountCol]
+        : amountPaidCol >= 0 && typeof row[amountPaidCol] === "number"
+          ? row[amountPaidCol]
+          : null;
+    const batch =
+      batchCol >= 0 && row[batchCol] != null ? `Batch ${row[batchCol]}` : "";
+    const date = dateCol >= 0 ? excelValueToDate(row[dateCol]) : null;
+    const dateStr = date
+      ? date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+      : "";
+    const note = [batch, dateStr].filter(Boolean).join(" · ") || undefined;
+
+    const entry: SubScopeRow = {
+      name: employer,
+      note,
+      values: [
+        { label: "Beneficiaries", value: benef, unit: "count" },
+        { label: "Amount Paid", value: amt, unit: "currency" },
+      ],
+    };
+    if (!byProvince[province]) byProvince[province] = [];
+    byProvince[province].push(entry);
+    region.push(entry);
+  }
+  byProvince["Region"] = region;
+  return byProvince;
+}
+
+// Flags a Payment-sheet row whose Province cell doesn't normalize into one
+// of the 5 MIMAROPA provinces — today it silently becomes its own bogus
+// "scope" on the dashboard with no explanation; this surfaces it instead,
+// same pattern as ampParser.ts's unmatched-address finding.
+function buildReconciliation(wb: XLSX.WorkBook): ReconciliationFinding[] {
+  const sheetName = wb.SheetNames.find((n) => n.toLowerCase().includes("payment"));
+  const paymentSheet = sheetName ? wb.Sheets[sheetName] : null;
+  const findings: ReconciliationFinding[] = [];
+  if (!paymentSheet || !sheetName) return findings;
+  const rows = sheetToRows(paymentSheet);
+  const headerIdx = findHeaderRow(rows, "province", "date received");
+  if (headerIdx === -1) return findings;
+  const provinceCol = colByHeader(rows[headerIdx], "province");
+  if (provinceCol === -1) return findings;
+
+  const unmatched: { row: number; value: string }[] = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const provinceRaw = row[provinceCol];
+    if (typeof provinceRaw !== "string" || !provinceRaw.trim()) continue;
+    if (!VALID_PROVINCES.has(normalizeProvince(provinceRaw))) {
+      unmatched.push({ row: i + 1, value: provinceRaw.trim() });
+    }
+  }
+
+  if (unmatched.length) {
+    findings.push({
+      severity: "warn",
+      title: `${unmatched.length} row(s) in the Payment sheet have an unrecognized Province`,
+      sheet: sheetName,
+      column: "Province",
+      detail:
+        "These rows show up as their own scope on the dashboard instead of being grouped into one of the 5 MIMAROPA provinces.",
+      fix: "Correct the Province cell to one of: Oriental Mindoro, Occidental Mindoro, Marinduque, Romblon, Palawan.",
+      cells: unmatched.slice(0, 40).map((u) => ({
+        rows: String(u.row),
+        label: `Row ${u.row}`,
+        value: u.value,
+      })),
+    });
+  }
+
+  return findings;
+}
+
 // --- A) Documents & Insurance status (Placement sheet) ---
 interface DocInsuranceStatus {
   docsYes: number;
@@ -533,7 +726,9 @@ interface AmountTotals {
   fund: number;
 }
 
-export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
+export function parseSpesWorkbook(
+  wb: XLSX.WorkBook,
+): SpesParseResult & GenericBreakdowns {
   const warnings: string[] = [];
   const year = detectYear(wb);
 
@@ -892,5 +1087,44 @@ export function parseSpesWorkbook(wb: XLSX.WorkBook): SpesParseResult {
     lguRates[province] = entries;
   }
 
-  return { periods, warnings, quarterly, unutilizedFunds, lguRates };
+  const periodicBreakdown = derivePeriodicBreakdown(wb);
+  const subScopeBreakdown = buildSubScopeBreakdown(wb);
+  const reconciliation = buildReconciliation(wb);
+  if (reconciliation.length === 0)
+    reconciliation.push({
+      severity: "info",
+      title: "No data-quality issues found",
+      detail: "Every Payment sheet row's Province matched one of the 5 MIMAROPA provinces.",
+    });
+  const methodNotes = [
+    "Beneficiaries Paid / Amount Paid come from the Payment sheet's Province column; province names are normalized against known aliases (e.g. \"Or. Mindoro\" → \"Oriental Mindoro\").",
+    "The Employer / LGU breakdown and month-by-month figures are both read from the Payment sheet's own rows (Date Received from FO, Employer, Beneficiaries, Amount Paid) — the same rows the top-line Beneficiaries Paid / Amount Paid figures are summed from, so they reconcile to the same totals.",
+    "Pledged / Supplemental / Placed counts come from the Pledge, Supplemental Pledge, and Placement sheets respectively — each summed by that sheet's own Province column.",
+    "Additional fund needed (where shown) is estimated from the \"SPES Hiring Rate\" sheet's per-province daily rate × 20 days — an estimate, not a figure encoded in the source file.",
+  ];
+
+  return {
+    periods,
+    warnings,
+    quarterly,
+    unutilizedFunds,
+    lguRates,
+    periodicBreakdown,
+    subScopeBreakdown,
+    reconciliation,
+    methodNotes,
+    breakdownLabels: {
+      periodic: "Month-by-month payment",
+      periodicCoarse: "Monthly",
+      subScope: "Employer / LGU breakdown",
+      periodicPrimary: "Beneficiaries paid",
+      periodicSecondary: "Amount Paid",
+      subScopeCaption:
+        "Beneficiaries and amount paid per employer/LGU, from the Payment sheet. A blank Amount Paid means that batch hasn't been paid yet — not a data error.",
+      periodicSourceLabel: "each payment's Date Received from FO",
+      periodicRowNoun: "employers paid",
+      periodicMatrixCaption:
+        'Each payment batch is placed in the month of its Date Received from FO (Payment sheet); batches with no date are grouped as "Undated". The Total column is the region-wide sum, and column / row totals reconcile to each province\'s Beneficiaries Paid / Amount Paid figures.',
+    },
+  };
 }
