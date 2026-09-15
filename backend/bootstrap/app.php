@@ -15,6 +15,15 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
 
+        // This backend is API-only — there's no named 'login' route (the
+        // login page lives in the Vue SPA). Without this, Laravel's default
+        // guest-redirect falls back to route('login'), which throws
+        // RouteNotFoundException and turns every unauthenticated non-JSON
+        // request into a 500 instead of a clean 401/redirect.
+        $middleware->redirectGuestsTo(
+            fn(Request $request) => $request->expectsJson() ? null : '/login',
+        );
+
         // Baseline response headers for every route this backend serves.
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
 
