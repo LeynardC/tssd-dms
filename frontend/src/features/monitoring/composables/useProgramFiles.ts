@@ -1,9 +1,9 @@
-import { ref, watch, type Ref } from "vue";
+import { ref, computed, watch, type Ref } from "vue";
 import { getAllProgramFiles, type FileRecord } from "../data/fileStore";
 import type { PeriodEntry } from "../data/mockMonitoring";
-import type { QuarterlyActual } from "../parsers";
+import type { QuarterlyActual, GenericBreakdowns } from "../parsers";
 
-export interface ParsedFileData {
+export interface ParsedFileData extends GenericBreakdowns {
   periods: PeriodEntry[];
   warnings: string[];
   quarterly?: Record<string, QuarterlyActual[]>;
@@ -116,45 +116,127 @@ export function singleShadowedFileId(conflicts: ShadowedPeriod[]): number | null
   return ids.size === 1 ? conflicts[0].fileId : null;
 }
 
-export function useProgramFiles(programId: Ref<string> | string) {
-  const allFiles = ref<FileRecord[]>([]);
-  const files = ref<MonitoringFile[]>([]);
-  const periods = ref<PeriodWithSource[]>([]);
-  const loading = ref(false);
-  const error = ref<string | null>(null);
+// ---------------------------------------------------------------------------
+// Shared per-program cache.
+//
+// Program Periods, Period Scopes, Period Dashboard and Export Center all read
+// the same "all files for this program" data. Previously each view fetched it
+// independently on mount, so walking Periods -> Scopes -> Dashboard fired the
+// same (parsed_data-heavy) request 3-4 times. Now every useProgramFiles() for
+// the same program id shares one cache entry:
+//   - first use  -> one fetch, with a loading skeleton
+//   - re-mount within REVALIDATE_AFTER_MS -> instant cached render, no request
+//   - re-mount later -> instant cached render + a silent background refresh
+//   - concurrent callers -> deduped onto one in-flight request
+//   - refresh() after an upload/delete -> forced fresh fetch
+// ---------------------------------------------------------------------------
 
-  // `background: true` re-pulls without touching `loading` or `error` — for
-  // the on-focus refresh, where flashing a skeleton or replacing still-valid
-  // data with an error banner is worse than quietly keeping what's shown.
-  async function refresh({ background = false }: { background?: boolean } = {}) {
-    const id = typeof programId === "string" ? programId : programId.value;
-    if (!background) {
-      loading.value = true;
-      error.value = null;
-    }
-    try {
-      const all = await getAllProgramFiles(id);
-      allFiles.value = all;
+interface CacheEntry {
+  allFiles: Ref<FileRecord[]>;
+  files: Ref<MonitoringFile[]>;
+  periods: Ref<PeriodWithSource[]>;
+  loading: Ref<boolean>;
+  error: Ref<string | null>;
+  loadedAt: number; // epoch ms; 0 = never successfully loaded
+  inFlight: Promise<void> | null;
+}
+
+const cache = new Map<string, CacheEntry>();
+const REVALIDATE_AFTER_MS = 10_000;
+
+function entryFor(id: string): CacheEntry {
+  let e = cache.get(id);
+  if (!e) {
+    e = {
+      allFiles: ref<FileRecord[]>([]),
+      files: ref<MonitoringFile[]>([]),
+      periods: ref<PeriodWithSource[]>([]),
+      loading: ref(false),
+      error: ref<string | null>(null),
+      loadedAt: 0,
+      inFlight: null,
+    };
+    cache.set(id, e);
+  }
+  return e;
+}
+
+function runFetch(id: string, e: CacheEntry, background: boolean): Promise<void> {
+  if (!background) {
+    e.loading.value = true;
+    e.error.value = null;
+  }
+  return getAllProgramFiles(id)
+    .then((all) => {
+      e.allFiles.value = all;
       const monitoring = all
         .map(toMonitoringFile)
         .filter((f): f is MonitoringFile => f !== null);
-      files.value = monitoring;
-      periods.value = buildPeriodsWithSource(monitoring);
-    } catch (e) {
+      e.files.value = monitoring;
+      e.periods.value = buildPeriodsWithSource(monitoring);
+      e.loadedAt = Date.now();
+    })
+    .catch(() => {
       if (!background) {
-        error.value =
+        e.error.value =
           "Could not load monitoring data. Check your connection and try again.";
       }
-    } finally {
-      if (!background) loading.value = false;
+    })
+    .finally(() => {
+      if (!background) e.loading.value = false;
+    });
+}
+
+function fetchProgram(
+  id: string,
+  { background = false, force = false }: { background?: boolean; force?: boolean } = {},
+): Promise<void> {
+  const e = entryFor(id);
+  if (e.inFlight) {
+    // A forced refresh (after a mutation) must not hand back data from a
+    // request that may have started before the mutation — chain a guaranteed
+    // fresh fetch after the current one instead.
+    if (force) {
+      e.inFlight = e.inFlight.then(() => runFetch(id, e, background));
     }
+    return e.inFlight;
+  }
+  e.inFlight = runFetch(id, e, background).finally(() => {
+    e.inFlight = null;
+  });
+  return e.inFlight;
+}
+
+export function useProgramFiles(programId: Ref<string> | string) {
+  const idRef: Ref<string> =
+    typeof programId === "string" ? ref(programId) : programId;
+
+  const view = () => entryFor(idRef.value);
+  const allFiles = computed(() => view().allFiles.value);
+  const files = computed(() => view().files.value);
+  const periods = computed(() => view().periods.value);
+  const loading = computed(() => view().loading.value);
+  const error = computed(() => view().error.value);
+
+  // A foreground refresh() is the post-upload / post-delete case — it must
+  // return genuinely fresh data, so it forces a fetch. A background refresh
+  // (the on-focus revalidate) is happy to piggyback on anything in flight.
+  function refresh(opts: { background?: boolean } = {}) {
+    return fetchProgram(idRef.value, { ...opts, force: !opts.background });
   }
 
-  if (typeof programId !== "string") {
-    watch(programId, () => refresh());
-  }
-
-  refresh();
+  watch(
+    idRef,
+    (id) => {
+      const e = entryFor(id);
+      if (e.loadedAt === 0) {
+        fetchProgram(id);
+      } else if (Date.now() - e.loadedAt > REVALIDATE_AFTER_MS) {
+        fetchProgram(id, { background: true });
+      }
+    },
+    { immediate: true },
+  );
 
   return { allFiles, files, periods, loading, error, refresh };
 }
