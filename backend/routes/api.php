@@ -14,6 +14,7 @@ use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\OAuthLinkController;
+use App\Http\Controllers\TwoFactorConfirmationController;
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
@@ -111,6 +112,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/recycle-bin', [RecycleBinController::class, 'index']);
     Route::post('/recycle-bin/empty', [RecycleBinController::class, 'emptyBin']);
 
+    // Step-up re-verification for an already-authenticated session (used
+    // before restoring a retired program) — an authenticator-code
+    // counterpart to Fortify's own password.confirm / passkeys.confirm.
+    Route::post('/user/confirm-two-factor-code', [TwoFactorConfirmationController::class, 'store'])
+        ->middleware('throttle:10,1');
+
     Route::get('/activity-log', [ActivityLogController::class, 'index']);
 
     Route::get('/search', [SearchController::class, 'index']);
@@ -136,7 +143,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::post('/programs', [ProgramController::class, 'store']);
         Route::patch('/programs/{program}/rename', [ProgramController::class, 'rename']);
-        Route::patch('/programs/{program}/toggle-status', [ProgramController::class, 'toggleStatus']);
+        Route::patch('/programs/{program}/retire', [ProgramController::class, 'retire']);
+        Route::patch('/programs/{program}/restore', [ProgramController::class, 'restore'])
+            ->middleware('password.confirm');
         Route::patch('/programs/{program:code}/profile', [ProgramController::class, 'updateProfile']);
 
         Route::post('/units', [UnitController::class, 'store']);
