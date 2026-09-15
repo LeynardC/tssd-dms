@@ -12,17 +12,24 @@ export interface FileRecord {
   uploaded_by: number | null;
   description: string | null;
   locked: boolean;
+  // Full blob for the Monitoring / Export views (getAllProgramFiles).
+  // In the File Explorer's slim listing this is absent and `has_parsed_data`
+  // carries the yes/no instead — see getFiles().
   parsed_data: Record<string, unknown> | null;
+  has_parsed_data?: number | boolean;
   created_at: string;
   updated_at: string;
   uploader?: { id: number; name: string };
 }
 
+// File Explorer listing — the browser doesn't need each file's parsed
+// spreadsheet blob to draw a row, so ask for the slim form (a
+// `has_parsed_data` flag instead). Much smaller payload per folder open.
 export async function getFiles(
   programId: string,
   folderId: number | null,
 ): Promise<FileRecord[]> {
-  const params = new URLSearchParams({ program_id: programId });
+  const params = new URLSearchParams({ program_id: programId, slim: "1" });
   params.set("folder_id", folderId === null ? "null" : String(folderId));
   const result = await apiFetch<{ files: FileRecord[] }>(
     `/api/files?${params.toString()}`,

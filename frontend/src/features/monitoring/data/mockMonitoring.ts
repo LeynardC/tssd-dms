@@ -120,91 +120,11 @@ export const programs: ProgramInfo[] = [
     name: "GIP",
     fullName: "Government Internship Program",
     description:
-      "Stipend/fund monitoring. Real actuals from FY2025 logsheet — targets pending Chief.",
+      "Stipend allocation vs. disbursement, by province and NTP. Figures come from the uploaded GIP Stipend Monitoring workbook.",
     granularity: "annual",
-    periods: [
-      {
-        year: 2025,
-        label: "FY 2025",
-        scope: "Oriental Mindoro",
-        metrics: [
-          metric("interns", "Interns Hired", "count", null, 226, true),
-          metric(
-            "allocation",
-            "Fund Allocation",
-            "currency",
-            null,
-            9084312.28,
-            true,
-          ),
-        ],
-      },
-      {
-        year: 2025,
-        label: "FY 2025",
-        scope: "Occidental Mindoro",
-        metrics: [
-          metric("interns", "Interns Hired", "count", null, 249, true),
-          metric(
-            "allocation",
-            "Fund Allocation",
-            "currency",
-            null,
-            13794219.7,
-            true,
-          ),
-        ],
-      },
-      {
-        year: 2025,
-        label: "FY 2025",
-        scope: "Marinduque",
-        metrics: [
-          metric("interns", "Interns Hired", "count", null, 90, true),
-          metric(
-            "allocation",
-            "Fund Allocation",
-            "currency",
-            null,
-            4954325.18,
-            true,
-          ),
-        ],
-      },
-      {
-        year: 2025,
-        label: "FY 2025",
-        scope: "Romblon",
-        metrics: [
-          metric("interns", "Interns Hired", "count", null, 75, true),
-          metric(
-            "allocation",
-            "Fund Allocation",
-            "currency",
-            null,
-            4268853.66,
-            true,
-          ),
-        ],
-      },
-      {
-        year: 2025,
-        label: "FY 2025",
-        scope: "Palawan",
-        metrics: [
-          metric("interns", "Interns Hired", "count", null, 182, true),
-          metric(
-            "allocation",
-            "Fund Allocation",
-            "currency",
-            null,
-            8407231.12,
-            true,
-          ),
-        ],
-        note: "Target interns/allocation not yet defined by Chief — awaiting real figures.",
-      },
-    ],
+    // Real data is parsed from each uploaded workbook by gipParser.ts — this
+    // program keeps no static period data.
+    periods: [],
   },
   {
     id: "do174",
